@@ -1,0 +1,4 @@
+ts,from,to,msg_type,symbol,side,price,qty,reason
+1763486717022594000,3,1,MarketOrder,PERP-ETH-USD,Sell,,1
+1763486718922594000,3,1,MarketOrder,PERP-ETH-USD,Buy,,1
+1763486720922594000,3,1,MarketOrder,PERP-ETH-USD,Sell,,1

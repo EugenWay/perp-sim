@@ -1,0 +1,42 @@
+{
+  "name": "simple-perp-demo",
+  "durationTicks": 50,
+  "tickNs": 100000000,
+  "logging": {
+    "enabled": true,
+    "dir": "./logs",
+    "orders": true,
+    "oracle": true
+  },
+  "latency": {
+    "networkDelayNs": 1000000,
+    "computeDelayNs": 500000
+  },
+  "symbols": [
+    {
+      "symbol": "PERP-ETH-USD",
+      "agents": [
+        {
+          "type": "Exchange",
+          "count": 1
+        },
+        {
+          "type": "Oracle",
+          "count": 1,
+          "params": {
+            "basePrice": 1500,
+            "step": 10,
+            "wakeFreqNs": 1000000000
+          }
+        },
+        {
+          "type": "Trader",
+          "count": 1,
+          "params": {
+            "wakeIntervalNs": 2000000000
+          }
+        }
+      ]
+    }
+  ]
+}
