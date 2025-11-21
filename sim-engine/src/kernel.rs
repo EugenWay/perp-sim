@@ -1,7 +1,3 @@
-// src/kernel.rs
-// Core simulation kernel: virtual time, priority queue for messages,
-// and message delivery into agents.
-
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -10,9 +6,7 @@ use crate::events::{EventBus, SimEvent};
 use crate::latency::LatencyModel;
 use crate::messages::{AgentId, Message, MessagePayload, MessageType, SimulatorApi};
 
-/// Internal wrapper for messages to implement ordering in a BinaryHeap.
-/// We want a min-heap by `at` (earliest messages first),
-/// but Rust's BinaryHeap is a max-heap, so we invert the ordering.
+// BinaryHeap wrapper - inverted ordering for min-heap by timestamp
 #[derive(Clone)]
 struct ScheduledMessage(Message);
 
@@ -204,7 +198,8 @@ impl SimulatorApi for Kernel {
                     let ev = SimEvent::OracleTick {
                         ts: self.time_ns,
                         symbol: p.symbol.clone(),
-                        price: p.price,
+                        price_min: p.price.min,
+                        price_max: p.price.max,
                     };
                     self.event_bus.emit(ev);
                 }

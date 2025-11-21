@@ -1,6 +1,3 @@
-// src/agents/trader_agent.rs
-// Simple trader agent that occasionally sends market orders to the exchange.
-
 use crate::agents::Agent;
 use crate::messages::{AgentId, MarketOrderPayload, Message, MessagePayload, MessageType, Side, SimulatorApi};
 

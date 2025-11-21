@@ -1,16 +1,13 @@
-// src/scenarios/simple_demo.rs
-// Simple scenario: one exchange + oracle + trader.
-// Logging now goes through EventBus + CSV, without a separate LoggerAgent.
-
 use crate::agents::{exchange_agent::ExchangeAgent, oracle_agent::OracleAgent, trader_agent::TraderAgent};
+use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
 use crate::sim_engine::SimEngine;
 
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 
-/// Helper struct to wrap a closure as an EventListener
 struct ClosureListener<F: FnMut(&SimEvent)> {
     closure: F,
 }
@@ -21,32 +18,103 @@ impl<F: FnMut(&SimEvent)> EventListener for ClosureListener<F> {
     }
 }
 
-/// Run a small demo simulation.
-pub fn run() {
-    let symbol = "PERP-ETH-USD".to_string();
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExchangeConfig {
+    id: u32,
+    name: String,
+    symbol: String,
+}
 
-    let exchange_id: u32 = 1;
-    let oracle_id: u32 = 2;
-    let trader_id: u32 = 3;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OracleConfig {
+    id: u32,
+    name: String,
+    symbols: Vec<String>,
+    provider: String,
+    cache_duration_ms: u64,
+    #[serde(default = "default_wake_interval")]
+    wake_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TraderConfig {
+    id: u32,
+    name: String,
+    #[serde(default = "default_trader_wake_interval")]
+    wake_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimConfig {
+    scenario_name: String,
+    duration_sec: u64,
+    logs_dir: String,
+    exchange: ExchangeConfig,
+    oracles: Vec<OracleConfig>,
+    traders: Vec<TraderConfig>,
+}
+
+fn default_wake_interval() -> u64 {
+    3000
+}
+
+fn default_trader_wake_interval() -> u64 {
+    2000
+}
+
+impl SimConfig {
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(serde_json::from_str(&content)?)
+    }
+
+    pub fn default() -> Self {
+        Self {
+            scenario_name: "simple_demo".to_string(),
+            duration_sec: 10,
+            logs_dir: "logs".to_string(),
+            exchange: ExchangeConfig {
+                id: 1,
+                name: "PerpExchange".to_string(),
+                symbol: "PERP-ETH-USD".to_string(),
+            },
+            oracles: vec![OracleConfig {
+                id: 2,
+                name: "PythOracle".to_string(),
+                symbols: vec!["ETH-USD".to_string(), "USDT-USD".to_string()],
+                provider: "Pyth".to_string(),
+                cache_duration_ms: 10000,
+                wake_interval_ms: 3000,
+            }],
+            traders: vec![TraderConfig {
+                id: 3,
+                name: "Trader1".to_string(),
+                wake_interval_ms: 2000,
+            }],
+        }
+    }
+}
+
+/// Run a simulation with given configuration
+fn run_with_config(config: SimConfig) {
+    println!("[Scenario] Loading scenario: {}", config.scenario_name);
+    println!("[Scenario] Duration: {}s", config.duration_sec);
+    println!("[Scenario] Oracles: {}", config.oracles.len());
+    println!("[Scenario] Traders: {}", config.traders.len());
+
+    let max_ticks = (config.duration_sec * 1000 / 100) as usize;
 
     let mut engine = SimEngine::with_default_latency();
 
-    //
-    // CSV logger for exchange orders — analog of TS CsvLog + kernel.on(ORDER_LOG)
-    //
     {
-        // Create logs directory, ignore error if it already exists.
-        let _ = fs::create_dir_all("logs");
-
-        let file = File::create("logs/orders.csv").expect("cannot create logs/orders.csv");
+        let _ = fs::create_dir_all(&config.logs_dir);
+        let orders_path = format!("{}/orders.csv", config.logs_dir);
+        let file = File::create(&orders_path).expect("cannot create orders.csv");
         let writer = RefCell::new(BufWriter::new(file));
 
-        // Simple header, can be extended later.
         writeln!(writer.borrow_mut(), "ts,from,to,msg_type,symbol,side,price,qty,reason")
             .expect("cannot write CSV header");
 
-        // Subscribe to OrderLog events.
-        // Writer moves into closure and lives until end of simulation.
         let listener = move |ev: &SimEvent| {
             if let SimEvent::OrderLog {
                 ts,
@@ -82,33 +150,67 @@ pub fn run() {
             .kernel
             .event_bus_mut()
             .subscribe(Box::new(ClosureListener { closure: listener }));
-        // Writer stays alive inside listener, so no separate variable needed.
     }
 
-    // --- Agent registration ---
-
     engine.kernel.add_agent(Box::new(ExchangeAgent::new(
-        exchange_id,
-        "PerpExchange".to_string(),
-        symbol.clone(),
+        config.exchange.id,
+        config.exchange.name.clone(),
+        config.exchange.symbol.clone(),
     )));
 
-    engine.kernel.add_agent(Box::new(OracleAgent::new(
-        oracle_id,
-        "Oracle".to_string(),
-        symbol.clone(),
-        exchange_id,
-    )));
+    for oracle_cfg in &config.oracles {
+        let cache_duration_sec = oracle_cfg.cache_duration_ms / 1000;
 
-    engine.kernel.add_agent(Box::new(TraderAgent::new(
-        trader_id,
-        "Trader1".to_string(),
-        exchange_id,
-        symbol.clone(),
-    )));
+        let provider: Box<dyn crate::api::PriceProvider> = match oracle_cfg.provider.as_str() {
+            "Pyth" => {
+                let pyth = PythProvider::new();
+                Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
+            }
+            _ => {
+                eprintln!("[Scenario] Unknown provider: {}, using Pyth", oracle_cfg.provider);
+                let pyth = PythProvider::new();
+                Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
+            }
+        };
 
-    // Oracle and Trader schedule their own wakeups in on_start.
-    println!("[Scenario] starting simple_demo");
-    engine.run(50);
-    println!("[Scenario] finished simple_demo");
+        let wake_interval_ns = oracle_cfg.wake_interval_ms * 1_000_000;
+
+        engine.kernel.add_agent(Box::new(OracleAgent::new(
+            oracle_cfg.id,
+            oracle_cfg.name.clone(),
+            oracle_cfg.symbols.clone(),
+            config.exchange.id,
+            wake_interval_ns,
+            provider,
+        )));
+    }
+
+    for trader_cfg in &config.traders {
+        engine.kernel.add_agent(Box::new(TraderAgent::new(
+            trader_cfg.id,
+            trader_cfg.name.clone(),
+            config.exchange.id,
+            config.exchange.symbol.clone(),
+        )));
+    }
+
+    println!("[Scenario] starting {}", config.scenario_name);
+    engine.run(max_ticks);
+    println!("[Scenario] finished {}", config.scenario_name);
+}
+
+pub fn run() {
+    run_scenario("simple_demo");
+}
+
+pub fn run_scenario(scenario_name: &str) {
+    let config_path = format!("sim-engine/src/scenarios/{}.json", scenario_name);
+
+    let config = SimConfig::from_file(&config_path).unwrap_or_else(|e| {
+        eprintln!("[Scenario] Failed to load {}: {}", config_path, e);
+        eprintln!("[Scenario] Using default configuration");
+        SimConfig::default()
+    });
+
+    run_with_config(config);
 }

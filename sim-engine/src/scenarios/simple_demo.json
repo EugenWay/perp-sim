@@ -1,42 +1,27 @@
 {
-  "name": "simple-perp-demo",
-  "durationTicks": 50,
-  "tickNs": 100000000,
-  "logging": {
-    "enabled": true,
-    "dir": "./logs",
-    "orders": true,
-    "oracle": true
+  "scenario_name": "simple_demo",
+  "duration_sec": 10,
+  "logs_dir": "logs",
+  "exchange": {
+    "id": 1,
+    "name": "PerpExchange",
+    "symbol": "PERP-ETH-USD"
   },
-  "latency": {
-    "networkDelayNs": 1000000,
-    "computeDelayNs": 500000
-  },
-  "symbols": [
+  "oracles": [
     {
-      "symbol": "PERP-ETH-USD",
-      "agents": [
-        {
-          "type": "Exchange",
-          "count": 1
-        },
-        {
-          "type": "Oracle",
-          "count": 1,
-          "params": {
-            "basePrice": 1500,
-            "step": 10,
-            "wakeFreqNs": 1000000000
-          }
-        },
-        {
-          "type": "Trader",
-          "count": 1,
-          "params": {
-            "wakeIntervalNs": 2000000000
-          }
-        }
-      ]
+      "id": 2,
+      "name": "PythOracle",
+      "symbols": ["ETH-USD", "USDT-USD"],
+      "provider": "Pyth",
+      "cache_duration_ms": 10000,
+      "wake_interval_ms": 3000
+    }
+  ],
+  "traders": [
+    {
+      "id": 3,
+      "name": "Trader1",
+      "wake_interval_ms": 2000
     }
   ]
 }

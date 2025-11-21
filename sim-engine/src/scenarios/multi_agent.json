@@ -1,0 +1,46 @@
+{
+  "scenario_name": "multi_agent",
+  "duration_sec": 20,
+  "logs_dir": "logs",
+  "exchange": {
+    "id": 1,
+    "name": "PerpExchange",
+    "symbol": "PERP-BTC-USD"
+  },
+  "oracles": [
+    {
+      "id": 2,
+      "name": "PythOracle_Main",
+      "symbols": ["BTC-USD", "ETH-USD", "SOL-USD"],
+      "provider": "Pyth",
+      "cache_duration_ms": 5000,
+      "wake_interval_ms": 3000
+    },
+    {
+      "id": 3,
+      "name": "PythOracle_Stables",
+      "symbols": ["USDT-USD"],
+      "provider": "Pyth",
+      "cache_duration_ms": 30000,
+      "wake_interval_ms": 10000
+    }
+  ],
+  "traders": [
+    {
+      "id": 10,
+      "name": "Trader_Fast",
+      "wake_interval_ms": 1000
+    },
+    {
+      "id": 11,
+      "name": "Trader_Slow",
+      "wake_interval_ms": 5000
+    },
+    {
+      "id": 12,
+      "name": "Trader_Random",
+      "wake_interval_ms": 3000
+    }
+  ]
+}
+

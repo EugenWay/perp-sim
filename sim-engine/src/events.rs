@@ -1,9 +1,5 @@
-// src/events.rs
-// Universal simulation event bus (EventBus).
-
 use crate::messages::{AgentId, MessageType, Side};
 
-/// High-level events that can be listened to by loggers, APIs, etc.
 #[derive(Debug, Clone)]
 pub enum SimEvent {
     OrderLog {
@@ -17,16 +13,18 @@ pub enum SimEvent {
         qty: Option<u64>,
     },
 
-    /// Oracle update (price).
-    OracleTick { ts: u64, symbol: String, price: u64 },
+    OracleTick {
+        ts: u64,
+        symbol: String,
+        price_min: u64,
+        price_max: u64,
+    },
 }
 
-/// Event listener interface.
 pub trait EventListener {
     fn on_event(&mut self, event: &SimEvent);
 }
 
-/// Simple event bus: stores a list of subscribers.
 pub struct EventBus {
     listeners: Vec<Box<dyn EventListener>>,
 }

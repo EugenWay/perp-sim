@@ -1,7 +1,6 @@
-// src/logging.rs
 // Simple CSV loggers on top of EventBus.
 
-use std::fs::{OpenOptions, create_dir_all};
+use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -76,7 +75,7 @@ pub struct CsvOracleLogger {
 
 impl CsvOracleLogger {
     pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
-        let header = "ts,symbol,price";
+        let header = "ts,symbol,price_min,price_max,price_mid";
         let file = open_csv_with_header(dir.as_ref(), "oracle.csv", header)?;
         Ok(Self { file })
     }
@@ -84,8 +83,9 @@ impl CsvOracleLogger {
 
 impl EventListener for CsvOracleLogger {
     fn on_event(&mut self, event: &SimEvent) {
-        if let SimEvent::OracleTick { ts, symbol, price } = event {
-            let line = format!("{ts},{symbol},{price}\n");
+        if let SimEvent::OracleTick { ts, symbol, price_min, price_max } = event {
+            let price_mid = (price_min + price_max) / 2;
+            let line = format!("{ts},{symbol},{price_min},{price_max},{price_mid}\n");
             if let Err(e) = self.file.write_all(line.as_bytes()) {
                 eprintln!("[CsvOracleLogger] write error: {e}");
             }

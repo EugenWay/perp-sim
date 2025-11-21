@@ -1,53 +1,39 @@
-// src/messages.rs
-// Core message types and simulator API used by all agents.
-
-/// Numeric identifier of an agent in the simulation.
 pub type AgentId = u32;
 
-/// High level message type.
-/// You can extend this enum as the protocol evolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageType {
     Wakeup,
-
-    // Trading commands
     LimitOrder,
     MarketOrder,
     CancelOrder,
     ModifyOrder,
-
-    // Queries
     QuerySpread,
     QueryLast,
-
-    // Market data / events
     MarketData,
     Trade,
-    OrderLog, // generic log event
-
-    // Oracle
+    OrderLog,
     OracleTick,
-
-    // Exchange responses
     OrderAccepted,
     OrderExecuted,
     OrderCancelled,
     OrderRejected,
-
-    // Risk / liquidations
     LiquidationScan,
     LiquidationExecute,
 }
 
-/// Basic side enum for orders and trades.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Buy,
     Sell,
 }
 
-/// Simple payload types.
-/// For the first iteration we keep payloads minimal.
+/// Price range (bid/ask spread) for perpetual DEX
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Price {
+    pub min: u64,  // lower bound (bid)
+    pub max: u64,  // upper bound (ask)
+}
+
 #[derive(Debug, Clone)]
 pub struct LimitOrderPayload {
     pub symbol: String,
@@ -63,13 +49,14 @@ pub struct MarketOrderPayload {
     pub qty: u64,
 }
 
-/// Oracle tick in simulation.
-/// Right now it is just (symbol, price); later you can extend it
-/// to min/max like your on-chain Price.
+/// Oracle price update with signature for on-chain verification.
+/// Includes min/max range computed from confidence interval.
 #[derive(Debug, Clone)]
 pub struct OracleTickPayload {
     pub symbol: String,
-    pub price: u64,
+    pub price: Price,           // min/max range (bid/ask)
+    pub publish_time: u64,      // Unix timestamp (seconds)
+    pub signature: Vec<u8>,     // VAA signature from oracle provider (e.g., Pyth Network)
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +65,6 @@ pub struct LiquidationTaskPayload {
     pub max_positions: u32,
 }
 
-/// Generic payload enum.
 #[derive(Debug, Clone)]
 pub enum MessagePayload {
     Empty,

@@ -1,12 +1,6 @@
-// src/agents/exchange_agent.rs
-// PerpExchange adapter agent (stub).
-// Later this will wrap the real PerpExchange engine / contract API.
-
 use crate::agents::Agent;
 use crate::messages::{AgentId, Message, MessagePayload, MessageType, OracleTickPayload, SimulatorApi};
 
-/// Simple stub for a PerpExchange agent.
-/// Right now it just logs incoming messages and stores last oracle price.
 pub struct ExchangeAgent {
     id: AgentId,
     name: String,
@@ -49,12 +43,15 @@ impl Agent for ExchangeAgent {
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
         match msg.msg_type {
             MessageType::OracleTick => {
-                if let MessagePayload::OracleTick(OracleTickPayload { symbol, price }) = &msg.payload {
+                if let MessagePayload::OracleTick(OracleTickPayload { symbol, price, publish_time, signature }) = &msg.payload {
                     if symbol == &self.symbol {
-                        self.last_price = Some(*price);
+                        // Store mid-price for internal use
+                        let mid_price = (price.min + price.max) / 2;
+                        self.last_price = Some(mid_price);
+                        
                         println!(
-                            "[Exchange {}] ORACLE_TICK {} price={} from {}",
-                            self.name, symbol, price, msg.from
+                            "[Exchange {}] ORACLE_TICK {} min={} max={} mid={} publish_time={} sig:{} bytes from {}",
+                            self.name, symbol, price.min, price.max, mid_price, publish_time, signature.len(), msg.from
                         );
                     } else {
                         println!(
