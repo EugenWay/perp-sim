@@ -43,15 +43,28 @@ impl Agent for ExchangeAgent {
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
         match msg.msg_type {
             MessageType::OracleTick => {
-                if let MessagePayload::OracleTick(OracleTickPayload { symbol, price, publish_time, signature }) = &msg.payload {
+                if let MessagePayload::OracleTick(OracleTickPayload {
+                    symbol,
+                    price,
+                    publish_time,
+                    signature,
+                }) = &msg.payload
+                {
                     if symbol == &self.symbol {
                         // Store mid-price for internal use
                         let mid_price = (price.min + price.max) / 2;
                         self.last_price = Some(mid_price);
-                        
+
                         println!(
                             "[Exchange {}] ORACLE_TICK {} min={} max={} mid={} publish_time={} sig:{} bytes from {}",
-                            self.name, symbol, price.min, price.max, mid_price, publish_time, signature.len(), msg.from
+                            self.name,
+                            symbol,
+                            price.min,
+                            price.max,
+                            mid_price,
+                            publish_time,
+                            signature.len(),
+                            msg.from
                         );
                     } else {
                         println!(

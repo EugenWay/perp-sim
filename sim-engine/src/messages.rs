@@ -30,8 +30,8 @@ pub enum Side {
 /// Price range (bid/ask spread) for perpetual DEX
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Price {
-    pub min: u64,  // lower bound (bid)
-    pub max: u64,  // upper bound (ask)
+    pub min: u64, // lower bound (bid)
+    pub max: u64, // upper bound (ask)
 }
 
 #[derive(Debug, Clone)]
@@ -54,9 +54,9 @@ pub struct MarketOrderPayload {
 #[derive(Debug, Clone)]
 pub struct OracleTickPayload {
     pub symbol: String,
-    pub price: Price,           // min/max range (bid/ask)
-    pub publish_time: u64,      // Unix timestamp (seconds)
-    pub signature: Vec<u8>,     // VAA signature from oracle provider (e.g., Pyth Network)
+    pub price: Price,       // min/max range (bid/ask)
+    pub publish_time: u64,  // Unix timestamp (seconds)
+    pub signature: Vec<u8>, // VAA signature from oracle provider (e.g., Pyth Network)
 }
 
 #[derive(Debug, Clone)]

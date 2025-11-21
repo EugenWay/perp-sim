@@ -83,7 +83,13 @@ impl CsvOracleLogger {
 
 impl EventListener for CsvOracleLogger {
     fn on_event(&mut self, event: &SimEvent) {
-        if let SimEvent::OracleTick { ts, symbol, price_min, price_max } = event {
+        if let SimEvent::OracleTick {
+            ts,
+            symbol,
+            price_min,
+            price_max,
+        } = event
+        {
             let price_mid = (price_min + price_max) / 2;
             let line = format!("{ts},{symbol},{price_min},{price_max},{price_mid}\n");
             if let Err(e) = self.file.write_all(line.as_bytes()) {
