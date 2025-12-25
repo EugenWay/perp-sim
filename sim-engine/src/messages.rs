@@ -5,6 +5,7 @@ pub enum MessageType {
     Wakeup,
     LimitOrder,
     MarketOrder,
+    CloseOrder,
     CancelOrder,
     ModifyOrder,
     QuerySpread,
@@ -49,6 +50,13 @@ pub struct MarketOrderPayload {
     pub qty: u64,
 }
 
+/// Close (decrease) an existing position
+#[derive(Debug, Clone)]
+pub struct CloseOrderPayload {
+    pub symbol: String,
+    pub side: Side, // Which side position to close (Buy=Long, Sell=Short)
+}
+
 /// Oracle price update with signature for on-chain verification.
 /// Includes min/max range computed from confidence interval.
 #[derive(Debug, Clone)]
@@ -71,6 +79,7 @@ pub enum MessagePayload {
     Text(String),
     LimitOrder(LimitOrderPayload),
     MarketOrder(MarketOrderPayload),
+    CloseOrder(CloseOrderPayload),
     OracleTick(OracleTickPayload),
     LiquidationTask(LiquidationTaskPayload),
 }

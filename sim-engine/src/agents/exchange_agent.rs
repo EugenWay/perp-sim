@@ -1,10 +1,12 @@
 use crate::agents::Agent;
 use crate::messages::{
-    AgentId, MarketOrderPayload, Message, MessagePayload, MessageType, OracleTickPayload, Side as SimSide, SimulatorApi,
+    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, OracleTickPayload,
+    Side as SimSide, SimulatorApi,
 };
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
 use perp_futures::services::BasicServicesBundle;
+use perp_futures::state::PositionKey;
 use perp_futures::state::State;
 use perp_futures::types::{
     AccountId, AssetId, MarketId, OraclePrices, Order, OrderType, Side, Timestamp, TokenAmount, Usd,
@@ -65,7 +67,9 @@ impl SimOracle {
         Self {
             cache,
             market_symbols,
-            collateral_price: 1_000_000, // $1 = 1_000_000 micro-dollars
+            // collateral_price = 1 because our tokens are already in micro-USD
+            // (1 token = $0.000001, so 1_000_000 tokens = $1)
+            collateral_price: 1,
         }
     }
 }
@@ -185,6 +189,92 @@ impl ExchangeAgent {
         }
     }
 
+    fn process_close_order(&mut self, from: AgentId, order: &CloseOrderPayload, now_ns: u64) {
+        let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
+            Some(m) => *m,
+            None => {
+                println!(
+                    "[Exchange {}] CLOSE REJECTED from {}: unknown symbol {}",
+                    self.name, from, order.symbol
+                );
+                return;
+            }
+        };
+
+        let account = self.get_or_create_account(from);
+        let side = Self::convert_side(order.side);
+
+        // Find the position
+        let position_key = PositionKey {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+        };
+
+        let position = match self.executor.state.positions.get(&position_key) {
+            Some(p) => p.clone(),
+            None => {
+                println!(
+                    "[Exchange {}] CLOSE REJECTED from {}: no {:?} position for {}",
+                    self.name, from, order.side, order.symbol
+                );
+                return;
+            }
+        };
+
+        let now: Timestamp = now_ns / 1_000_000_000;
+
+        // Create decrease order for full position size
+        // Note: withdraw_collateral_amount = 0 lets the executor calculate the correct payout
+        // after accounting for PnL, fees, etc.
+        let perp_order = Order {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+            order_type: OrderType::Decrease,
+            collateral_delta_tokens: 0,
+            size_delta_usd: position.size_usd, // Close full position
+            withdraw_collateral_amount: 0,     // Executor will calculate payout
+            target_leverage_x: 0,
+            created_at: now,
+            valid_from: now,
+            valid_until: now + 3600,
+        };
+
+        let order_id = self.executor.submit_order(perp_order);
+
+        match self.executor.execute_order(now, order_id) {
+            Ok(()) => {
+                println!(
+                    "[Exchange {}] CLOSED {} from={} side={:?} size=${:.2}",
+                    self.name,
+                    order.symbol,
+                    from,
+                    order.side,
+                    position.size_usd as f64 / 1_000_000.0
+                );
+
+                if let Some(market) = self.executor.state.markets.get(&market_id) {
+                    println!(
+                        "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
+                        self.name,
+                        order.symbol,
+                        market.oi_long_usd as f64 / 1_000_000.0,
+                        market.oi_short_usd as f64 / 1_000_000.0
+                    );
+                }
+            }
+            Err(e) => {
+                println!(
+                    "[Exchange {}] CLOSE REJECTED {} from={} error={}",
+                    self.name, order.symbol, from, e
+                );
+            }
+        }
+    }
+
     fn process_market_order(&mut self, from: AgentId, order: &MarketOrderPayload, now_ns: u64) {
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
             Some(m) => *m,
@@ -248,11 +338,11 @@ impl ExchangeAgent {
 
                 if let Some(market) = self.executor.state.markets.get(&market_id) {
                     println!(
-                        "[Exchange {}] {} OI: long=${:.2}M short=${:.2}M",
+                        "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
                         self.name,
                         order.symbol,
-                        market.oi_long_usd as f64 / 1_000_000_000_000.0,
-                        market.oi_short_usd as f64 / 1_000_000_000_000.0
+                        market.oi_long_usd as f64 / 1_000_000.0,
+                        market.oi_short_usd as f64 / 1_000_000.0
                     );
                 }
             }
@@ -287,11 +377,11 @@ impl Agent for ExchangeAgent {
             let market_id = MarketId(market_cfg.id);
             if let Some(market) = self.executor.state.markets.get(&market_id) {
                 println!(
-                    "[Exchange {}] {} OI: long=${:.2}M short=${:.2}M",
+                    "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
                     self.name,
                     market_cfg.symbol,
-                    market.oi_long_usd as f64 / 1_000_000_000_000.0,
-                    market.oi_short_usd as f64 / 1_000_000_000_000.0
+                    market.oi_long_usd as f64 / 1_000_000.0,
+                    market.oi_short_usd as f64 / 1_000_000.0
                 );
             }
         }
@@ -329,6 +419,12 @@ impl Agent for ExchangeAgent {
             MessageType::MarketOrder => {
                 if let MessagePayload::MarketOrder(order) = &msg.payload {
                     self.process_market_order(msg.from, order, sim.now_ns());
+                }
+            }
+
+            MessageType::CloseOrder => {
+                if let MessagePayload::CloseOrder(order) = &msg.payload {
+                    self.process_close_order(msg.from, order, sim.now_ns());
                 }
             }
 

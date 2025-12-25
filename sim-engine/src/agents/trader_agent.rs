@@ -1,5 +1,7 @@
 use crate::agents::Agent;
-use crate::messages::{AgentId, MarketOrderPayload, Message, MessagePayload, MessageType, Side, SimulatorApi};
+use crate::messages::{
+    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, Side, SimulatorApi,
+};
 
 pub struct TraderAgent {
     id: AgentId,
@@ -7,7 +9,10 @@ pub struct TraderAgent {
     exchange_id: AgentId,
     symbol: String,
     wake_interval_ns: u64,
-    last_side_long: bool,
+    // State tracking
+    has_long_position: bool,
+    has_short_position: bool,
+    trade_count: u32,
 }
 
 impl TraderAgent {
@@ -17,8 +22,10 @@ impl TraderAgent {
             name,
             exchange_id,
             symbol,
-            wake_interval_ns: 2_000_000_000, // 2 seconds in virtual time
-            last_side_long: true,
+            wake_interval_ns: 2_000_000_000, // 2 seconds
+            has_long_position: false,
+            has_short_position: false,
+            trade_count: 0,
         }
     }
 }
@@ -42,36 +49,71 @@ impl Agent for TraderAgent {
     }
 
     fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
-        // Flip side each wakeup just for demo.
-        self.last_side_long = !self.last_side_long;
-        let side = if self.last_side_long { Side::Buy } else { Side::Sell };
+        self.trade_count += 1;
 
-        let payload = MessagePayload::MarketOrder(MarketOrderPayload {
-            symbol: self.symbol.clone(),
-            side,
-            qty: 1,
-        });
+        // Simple pattern: open Long -> close Long -> open Short -> close Short -> repeat
+        let action = self.trade_count % 4;
 
-        println!(
-            "[Trader {}] wakeup at t={} ns -> sending MARKET_ORDER side={:?}",
-            self.name, now_ns, side
-        );
+        match action {
+            1 => {
+                // Open Long
+                let payload = MessagePayload::MarketOrder(MarketOrderPayload {
+                    symbol: self.symbol.clone(),
+                    side: Side::Buy,
+                    qty: 1,
+                });
+                println!("[Trader {}] OPEN LONG", self.name);
+                sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
+                self.has_long_position = true;
+            }
+            2 => {
+                // Close Long
+                if self.has_long_position {
+                    let payload = MessagePayload::CloseOrder(CloseOrderPayload {
+                        symbol: self.symbol.clone(),
+                        side: Side::Buy,
+                    });
+                    println!("[Trader {}] CLOSE LONG", self.name);
+                    sim.send(self.id, self.exchange_id, MessageType::CloseOrder, payload);
+                    self.has_long_position = false;
+                }
+            }
+            3 => {
+                // Open Short
+                let payload = MessagePayload::MarketOrder(MarketOrderPayload {
+                    symbol: self.symbol.clone(),
+                    side: Side::Sell,
+                    qty: 1,
+                });
+                println!("[Trader {}] OPEN SHORT", self.name);
+                sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
+                self.has_short_position = true;
+            }
+            0 => {
+                // Close Short
+                if self.has_short_position {
+                    let payload = MessagePayload::CloseOrder(CloseOrderPayload {
+                        symbol: self.symbol.clone(),
+                        side: Side::Sell,
+                    });
+                    println!("[Trader {}] CLOSE SHORT", self.name);
+                    sim.send(self.id, self.exchange_id, MessageType::CloseOrder, payload);
+                    self.has_short_position = false;
+                }
+            }
+            _ => {}
+        }
 
-        sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
-
-        // Schedule next wakeup.
+        // Schedule next wakeup
         let next = now_ns.saturating_add(self.wake_interval_ns);
         sim.wakeup(self.id, next);
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
-        println!(
-            "[Trader {}] received msg {:?} from {} payload={:?}",
-            self.name, msg.msg_type, msg.from, msg.payload
-        );
+        println!("[Trader {}] received {:?} from {}", self.name, msg.msg_type, msg.from);
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {
-        println!("[Trader {}] stopping", self.name);
+        println!("[Trader {}] stopping, trades={}", self.name, self.trade_count);
     }
 }
