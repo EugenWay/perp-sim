@@ -1,4 +1,8 @@
-use crate::agents::{exchange_agent::ExchangeAgent, oracle_agent::OracleAgent, trader_agent::TraderAgent};
+use crate::agents::{
+    exchange_agent::{ExchangeAgent, MarketConfig},
+    oracle_agent::OracleAgent,
+    trader_agent::TraderAgent,
+};
 use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
 use crate::sim_engine::SimEngine;
@@ -19,10 +23,26 @@ impl<F: FnMut(&SimEvent)> EventListener for ClosureListener<F> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct LiquidityConfig {
+    collateral_amount: i128,
+    index_amount: i128,
+    liquidity_usd: i128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MarketJsonConfig {
+    id: u32,
+    symbol: String,
+    index_token: String,
+    collateral_token: String,
+    initial_liquidity: LiquidityConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ExchangeConfig {
     id: u32,
     name: String,
-    symbol: String,
+    markets: Vec<MarketJsonConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +60,7 @@ struct OracleConfig {
 struct TraderConfig {
     id: u32,
     name: String,
+    symbol: String,
     #[serde(default = "default_trader_wake_interval")]
     wake_interval_ms: u64,
 }
@@ -67,8 +88,10 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&content)?)
     }
+}
 
-    pub fn default() -> Self {
+impl Default for SimConfig {
+    fn default() -> Self {
         Self {
             scenario_name: "simple_demo".to_string(),
             duration_sec: 10,
@@ -76,7 +99,17 @@ impl SimConfig {
             exchange: ExchangeConfig {
                 id: 1,
                 name: "PerpExchange".to_string(),
-                symbol: "PERP-ETH-USD".to_string(),
+                markets: vec![MarketJsonConfig {
+                    id: 0,
+                    symbol: "ETH-USD".to_string(),
+                    index_token: "ETH".to_string(),
+                    collateral_token: "USDT".to_string(),
+                    initial_liquidity: LiquidityConfig {
+                        collateral_amount: 1_000_000_000_000,
+                        index_amount: 500_000_000_000,
+                        liquidity_usd: 2_000_000_000_000,
+                    },
+                }],
             },
             oracles: vec![OracleConfig {
                 id: 2,
@@ -89,6 +122,7 @@ impl SimConfig {
             traders: vec![TraderConfig {
                 id: 3,
                 name: "Trader1".to_string(),
+                symbol: "ETH-USD".to_string(),
                 wake_interval_ms: 2000,
             }],
         }
@@ -99,6 +133,7 @@ impl SimConfig {
 fn run_with_config(config: SimConfig) {
     println!("[Scenario] Loading scenario: {}", config.scenario_name);
     println!("[Scenario] Duration: {}s", config.duration_sec);
+    println!("[Scenario] Markets: {}", config.exchange.markets.len());
     println!("[Scenario] Oracles: {}", config.oracles.len());
     println!("[Scenario] Traders: {}", config.traders.len());
 
@@ -112,8 +147,11 @@ fn run_with_config(config: SimConfig) {
         let file = File::create(&orders_path).expect("cannot create orders.csv");
         let writer = RefCell::new(BufWriter::new(file));
 
-        writeln!(writer.borrow_mut(), "ts,from,to,msg_type,symbol,side,price,qty,reason")
-            .expect("cannot write CSV header");
+        writeln!(
+            writer.borrow_mut(),
+            "ts,from,to,msg_type,symbol,side,price,qty,reason"
+        )
+        .expect("cannot write CSV header");
 
         let listener = move |ev: &SimEvent| {
             if let SimEvent::OrderLog {
@@ -152,10 +190,26 @@ fn run_with_config(config: SimConfig) {
             .subscribe(Box::new(ClosureListener { closure: listener }));
     }
 
+    // Convert JSON market configs to ExchangeAgent MarketConfig
+    let markets: Vec<MarketConfig> = config
+        .exchange
+        .markets
+        .iter()
+        .map(|m| MarketConfig {
+            id: m.id,
+            symbol: m.symbol.clone(),
+            index_token: m.index_token.clone(),
+            collateral_token: m.collateral_token.clone(),
+            collateral_amount: m.initial_liquidity.collateral_amount,
+            index_amount: m.initial_liquidity.index_amount,
+            liquidity_usd: m.initial_liquidity.liquidity_usd,
+        })
+        .collect();
+
     engine.kernel.add_agent(Box::new(ExchangeAgent::new(
         config.exchange.id,
         config.exchange.name.clone(),
-        config.exchange.symbol.clone(),
+        markets,
     )));
 
     for oracle_cfg in &config.oracles {
@@ -167,7 +221,10 @@ fn run_with_config(config: SimConfig) {
                 Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
             }
             _ => {
-                eprintln!("[Scenario] Unknown provider: {}, using Pyth", oracle_cfg.provider);
+                eprintln!(
+                    "[Scenario] Unknown provider: {}, using Pyth",
+                    oracle_cfg.provider
+                );
                 let pyth = PythProvider::new();
                 Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
             }
@@ -190,7 +247,7 @@ fn run_with_config(config: SimConfig) {
             trader_cfg.id,
             trader_cfg.name.clone(),
             config.exchange.id,
-            config.exchange.symbol.clone(),
+            trader_cfg.symbol.clone(),
         )));
     }
 

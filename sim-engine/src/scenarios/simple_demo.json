@@ -5,7 +5,19 @@
   "exchange": {
     "id": 1,
     "name": "PerpExchange",
-    "symbol": "PERP-ETH-USD"
+    "markets": [
+      {
+        "id": 0,
+        "symbol": "ETH-USD",
+        "index_token": "ETH",
+        "collateral_token": "USDT",
+        "initial_liquidity": {
+          "collateral_amount": 1000000000000,
+          "index_amount": 500000000000,
+          "liquidity_usd": 2000000000000
+        }
+      }
+    ]
   },
   "oracles": [
     {
@@ -21,6 +33,7 @@
     {
       "id": 3,
       "name": "Trader1",
+      "symbol": "ETH-USD",
       "wake_interval_ms": 2000
     }
   ]
