@@ -301,9 +301,10 @@ impl ExchangeAgent {
             }
         };
 
-        // qty * price = size in USD, 5x leverage
+        // qty * price = size in USD
+        let leverage = order.leverage.max(1) as Usd; // minimum 1x
         let size_delta_usd: Usd = (order.qty as Usd) * price;
-        let collateral_delta: TokenAmount = size_delta_usd / 5;
+        let collateral_delta: TokenAmount = size_delta_usd / leverage;
         let now: Timestamp = now_ns / 1_000_000_000;
 
         let perp_order = Order {
@@ -315,7 +316,7 @@ impl ExchangeAgent {
             collateral_delta_tokens: collateral_delta,
             size_delta_usd,
             withdraw_collateral_amount: 0,
-            target_leverage_x: 5,
+            target_leverage_x: order.leverage as i64,
             created_at: now,
             valid_from: now,
             valid_until: now + 3600,
@@ -326,14 +327,15 @@ impl ExchangeAgent {
         match self.executor.execute_order(now, order_id) {
             Ok(()) => {
                 println!(
-                    "[Exchange {}] EXECUTED {} from={} side={:?} qty={} size=${:.2} collateral=${:.2}",
+                    "[Exchange {}] EXECUTED {} from={} side={:?} qty={} size=${:.2} collateral=${:.2} leverage={}x",
                     self.name,
                     order.symbol,
                     from,
                     order.side,
                     order.qty,
                     size_delta_usd as f64 / 1_000_000.0,
-                    collateral_delta as f64 / 1_000_000.0
+                    collateral_delta as f64 / 1_000_000.0,
+                    order.leverage
                 );
 
                 if let Some(market) = self.executor.state.markets.get(&market_id) {

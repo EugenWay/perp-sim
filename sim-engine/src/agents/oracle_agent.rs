@@ -103,7 +103,8 @@ impl Agent for OracleAgent {
                         signature: signed_data.signature,
                     });
 
-                    sim.send(self.id, self.exchange_id, MessageType::OracleTick, payload);
+                    // Broadcast to all agents so SmartTraders can track prices
+                    sim.broadcast(self.id, MessageType::OracleTick, payload);
                 }
                 Err(e) => {
                     eprintln!("[Oracle {}] error fetching {}: {}", self.name, symbol, e);

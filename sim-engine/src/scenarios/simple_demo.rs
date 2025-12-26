@@ -1,8 +1,10 @@
 use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     oracle_agent::OracleAgent,
+    smart_trader_agent::{SmartTraderAgent, SmartTraderConfig, TradingStrategy},
     trader_agent::TraderAgent,
 };
+use crate::messages::Side;
 use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
 use crate::sim_engine::SimEngine;
@@ -66,13 +68,66 @@ struct TraderConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct SmartTraderJsonConfig {
+    id: u32,
+    name: String,
+    symbol: String,
+    strategy: String,              // "hodler", "risky", "trend_follower"
+    #[serde(default = "default_side")]
+    side: String,                  // "long" or "short" (for hodler)
+    #[serde(default = "default_leverage")]
+    leverage: u32,
+    #[serde(default = "default_qty")]
+    qty: u64,
+    #[serde(default = "default_hold_duration")]
+    hold_duration_sec: u64,        // for hodler
+    #[serde(default = "default_lookback")]
+    lookback_sec: u64,             // for trend_follower
+    #[serde(default = "default_threshold")]
+    threshold_pct: f64,            // for trend_follower
+    #[serde(default = "default_smart_wake_interval")]
+    wake_interval_ms: u64,
+}
+
+fn default_side() -> String {
+    "long".to_string()
+}
+
+fn default_leverage() -> u32 {
+    5
+}
+
+fn default_qty() -> u64 {
+    1
+}
+
+fn default_hold_duration() -> u64 {
+    60
+}
+
+fn default_lookback() -> u64 {
+    30
+}
+
+fn default_threshold() -> f64 {
+    0.5
+}
+
+fn default_smart_wake_interval() -> u64 {
+    5000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
     scenario_name: String,
     duration_sec: u64,
     logs_dir: String,
     exchange: ExchangeConfig,
     oracles: Vec<OracleConfig>,
+    #[serde(default)]
     traders: Vec<TraderConfig>,
+    #[serde(default)]
+    smart_traders: Vec<SmartTraderJsonConfig>,
 }
 
 fn default_wake_interval() -> u64 {
@@ -125,6 +180,7 @@ impl Default for SimConfig {
                 symbol: "ETH-USD".to_string(),
                 wake_interval_ms: 2000,
             }],
+            smart_traders: vec![],
         }
     }
 }
@@ -136,6 +192,7 @@ fn run_with_config(config: SimConfig) {
     println!("[Scenario] Markets: {}", config.exchange.markets.len());
     println!("[Scenario] Oracles: {}", config.oracles.len());
     println!("[Scenario] Traders: {}", config.traders.len());
+    println!("[Scenario] SmartTraders: {}", config.smart_traders.len());
 
     let max_ticks = (config.duration_sec * 1000 / 100) as usize;
 
@@ -249,6 +306,52 @@ fn run_with_config(config: SimConfig) {
             config.exchange.id,
             trader_cfg.symbol.clone(),
         )));
+    }
+
+    // Create smart traders
+    for smart_cfg in &config.smart_traders {
+        let side = match smart_cfg.side.to_lowercase().as_str() {
+            "short" | "sell" => Side::Sell,
+            _ => Side::Buy,
+        };
+
+        let strategy = match smart_cfg.strategy.to_lowercase().as_str() {
+            "hodler" => TradingStrategy::Hodler {
+                side,
+                hold_duration_sec: smart_cfg.hold_duration_sec,
+                leverage: smart_cfg.leverage,
+            },
+            "risky" => TradingStrategy::Risky {
+                leverage: smart_cfg.leverage,
+            },
+            "trend_follower" | "trend" => TradingStrategy::TrendFollower {
+                lookback_sec: smart_cfg.lookback_sec,
+                threshold_pct: smart_cfg.threshold_pct,
+                leverage: smart_cfg.leverage,
+            },
+            _ => {
+                eprintln!(
+                    "[Scenario] Unknown strategy: {}, using Risky",
+                    smart_cfg.strategy
+                );
+                TradingStrategy::Risky {
+                    leverage: smart_cfg.leverage,
+                }
+            }
+        };
+
+        let smart_config = SmartTraderConfig {
+            name: smart_cfg.name.clone(),
+            exchange_id: config.exchange.id,
+            symbol: smart_cfg.symbol.clone(),
+            strategy,
+            qty: smart_cfg.qty,
+            wake_interval_ms: smart_cfg.wake_interval_ms,
+        };
+
+        engine
+            .kernel
+            .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
     }
 
     println!("[Scenario] starting {}", config.scenario_name);

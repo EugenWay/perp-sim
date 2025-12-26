@@ -1,6 +1,6 @@
 {
   "scenario_name": "simple_demo",
-  "duration_sec": 10,
+  "duration_sec": 180,
   "logs_dir": "logs",
   "exchange": {
     "id": 1,
@@ -12,9 +12,9 @@
         "index_token": "ETH",
         "collateral_token": "USDT",
         "initial_liquidity": {
-          "collateral_amount": 1000000000000,
-          "index_amount": 500000000000,
-          "liquidity_usd": 2000000000000
+          "collateral_amount": 10000000000000,
+          "index_amount": 5000000000000,
+          "liquidity_usd": 20000000000000
         }
       }
     ]
@@ -23,18 +23,71 @@
     {
       "id": 2,
       "name": "PythOracle",
-      "symbols": ["ETH-USD", "USDT-USD"],
+      "symbols": ["ETH-USD"],
       "provider": "Pyth",
-      "cache_duration_ms": 10000,
-      "wake_interval_ms": 3000
+      "cache_duration_ms": 5000,
+      "wake_interval_ms": 5000
     }
   ],
   "traders": [
     {
-      "id": 3,
-      "name": "Trader1",
+      "id": 10,
+      "name": "CyclicTrader",
       "symbol": "ETH-USD",
-      "wake_interval_ms": 2000
+      "wake_interval_ms": 10000
+    }
+  ],
+  "smart_traders": [
+    {
+      "id": 20,
+      "name": "HodlerLong",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 5,
+      "qty": 1,
+      "hold_duration_sec": 120,
+      "wake_interval_ms": 10000
+    },
+    {
+      "id": 21,
+      "name": "HodlerShort",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 5,
+      "qty": 1,
+      "hold_duration_sec": 90,
+      "wake_interval_ms": 10000
+    },
+    {
+      "id": 30,
+      "name": "RiskyTrader10x",
+      "symbol": "ETH-USD",
+      "strategy": "risky",
+      "leverage": 10,
+      "qty": 1,
+      "wake_interval_ms": 15000
+    },
+    {
+      "id": 31,
+      "name": "RiskyTrader20x",
+      "symbol": "ETH-USD",
+      "strategy": "risky",
+      "leverage": 20,
+      "qty": 1,
+      "wake_interval_ms": 20000
+    },
+    {
+      "id": 40,
+      "name": "TrendFollower",
+      "symbol": "ETH-USD",
+      "strategy": "trend_follower",
+      "leverage": 5,
+      "qty": 1,
+      "lookback_sec": 30,
+      "threshold_pct": 0.3,
+      "wake_interval_ms": 10000
     }
   ]
 }

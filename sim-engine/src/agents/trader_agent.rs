@@ -61,8 +61,9 @@ impl Agent for TraderAgent {
                     symbol: self.symbol.clone(),
                     side: Side::Buy,
                     qty: 1,
+                    leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN LONG", self.name);
+                println!("[Trader {}] OPEN LONG 5x", self.name);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_long_position = true;
             }
@@ -84,8 +85,9 @@ impl Agent for TraderAgent {
                     symbol: self.symbol.clone(),
                     side: Side::Sell,
                     qty: 1,
+                    leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN SHORT", self.name);
+                println!("[Trader {}] OPEN SHORT 5x", self.name);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_short_position = true;
             }

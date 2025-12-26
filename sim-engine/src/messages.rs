@@ -48,6 +48,7 @@ pub struct MarketOrderPayload {
     pub symbol: String,
     pub side: Side,
     pub qty: u64,
+    pub leverage: u32, // 1-100x, default 5x
 }
 
 /// Close (decrease) an existing position
