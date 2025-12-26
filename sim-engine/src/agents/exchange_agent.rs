@@ -1,4 +1,5 @@
 use crate::agents::Agent;
+use crate::events::SimEvent;
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, OracleTickPayload,
     Side as SimSide, SimulatorApi,
@@ -189,7 +190,7 @@ impl ExchangeAgent {
         }
     }
 
-    fn process_close_order(&mut self, from: AgentId, order: &CloseOrderPayload, now_ns: u64) {
+    fn process_close_order(&mut self, sim: &mut dyn SimulatorApi, from: AgentId, order: &CloseOrderPayload, now_ns: u64) {
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
             Some(m) => *m,
             None => {
@@ -224,6 +225,7 @@ impl ExchangeAgent {
         };
 
         let now: Timestamp = now_ns / 1_000_000_000;
+        let execution_price = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
 
         // Create decrease order for full position size
         // Note: withdraw_collateral_amount = 0 lets the executor calculate the correct payout
@@ -256,6 +258,19 @@ impl ExchangeAgent {
                     position.size_usd as f64 / 1_000_000.0
                 );
 
+                // Emit execution event
+                sim.emit_event(SimEvent::OrderExecuted {
+                    ts: now_ns,
+                    account: from,
+                    symbol: order.symbol.clone(),
+                    side: order.side,
+                    size_usd: position.size_usd as u64,
+                    collateral: position.collateral_amount as u64,
+                    execution_price,
+                    leverage: 0, // N/A for close
+                    order_type: "Decrease".to_string(),
+                });
+
                 if let Some(market) = self.executor.state.markets.get(&market_id) {
                     println!(
                         "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
@@ -275,7 +290,7 @@ impl ExchangeAgent {
         }
     }
 
-    fn process_market_order(&mut self, from: AgentId, order: &MarketOrderPayload, now_ns: u64) {
+    fn process_market_order(&mut self, sim: &mut dyn SimulatorApi, from: AgentId, order: &MarketOrderPayload, now_ns: u64) {
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
             Some(m) => *m,
             None => {
@@ -337,6 +352,19 @@ impl ExchangeAgent {
                     collateral_delta as f64 / 1_000_000.0,
                     order.leverage
                 );
+
+                // Emit execution event
+                sim.emit_event(SimEvent::OrderExecuted {
+                    ts: now_ns,
+                    account: from,
+                    symbol: order.symbol.clone(),
+                    side: order.side,
+                    size_usd: size_delta_usd as u64,
+                    collateral: collateral_delta as u64,
+                    execution_price: price as u64,
+                    leverage: order.leverage,
+                    order_type: "Increase".to_string(),
+                });
 
                 if let Some(market) = self.executor.state.markets.get(&market_id) {
                     println!(
@@ -420,13 +448,15 @@ impl Agent for ExchangeAgent {
 
             MessageType::MarketOrder => {
                 if let MessagePayload::MarketOrder(order) = &msg.payload {
-                    self.process_market_order(msg.from, order, sim.now_ns());
+                    let now_ns = sim.now_ns();
+                    self.process_market_order(sim, msg.from, order, now_ns);
                 }
             }
 
             MessageType::CloseOrder => {
                 if let MessagePayload::CloseOrder(order) = &msg.payload {
-                    self.process_close_order(msg.from, order, sim.now_ns());
+                    let now_ns = sim.now_ns();
+                    self.process_close_order(sim, msg.from, order, now_ns);
                 }
             }
 

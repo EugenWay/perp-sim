@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::events::EventListener;
 use crate::kernel::Kernel;
 use crate::latency::{FixedLatency, LatencyModel};
-use crate::logging::{CsvOracleLogger, CsvOrderLogger};
+use crate::logging::{CsvExecutionLogger, CsvOracleLogger, CsvOrderLogger};
 
 pub struct SimEngine {
     pub kernel: Kernel,
@@ -32,6 +32,16 @@ impl SimEngine {
                     println!("[SimEngine] CsvOracleLogger attached");
                 }
                 Err(e) => eprintln!("[SimEngine] failed to init CsvOracleLogger: {e}"),
+            }
+
+            match CsvExecutionLogger::new(dir) {
+                Ok(logger) => {
+                    kernel
+                        .event_bus_mut()
+                        .subscribe(Box::new(logger) as Box<dyn EventListener>);
+                    println!("[SimEngine] CsvExecutionLogger attached");
+                }
+                Err(e) => eprintln!("[SimEngine] failed to init CsvExecutionLogger: {e}"),
             }
         }
 

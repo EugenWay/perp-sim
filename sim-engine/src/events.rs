@@ -2,6 +2,7 @@ use crate::messages::{AgentId, MessageType, Side};
 
 #[derive(Debug, Clone)]
 pub enum SimEvent {
+    /// Order submitted (before execution)
     OrderLog {
         ts: u64,
         from: AgentId,
@@ -13,6 +14,20 @@ pub enum SimEvent {
         qty: Option<u64>,
     },
 
+    /// Order executed by exchange
+    OrderExecuted {
+        ts: u64,
+        account: AgentId,
+        symbol: String,
+        side: Side,
+        size_usd: u64,       // Position size in micro-USD
+        collateral: u64,     // Collateral in micro-USD
+        execution_price: u64, // Execution price in micro-USD
+        leverage: u32,
+        order_type: String,  // "Increase", "Decrease", "Liquidation"
+    },
+
+    /// Oracle price update
     OracleTick {
         ts: u64,
         symbol: String,

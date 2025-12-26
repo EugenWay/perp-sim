@@ -132,4 +132,7 @@ pub trait SimulatorApi {
 
     /// Broadcast a message from one agent to all others.
     fn broadcast(&mut self, from: AgentId, kind: MessageType, payload: MessagePayload);
+
+    /// Emit a high-level event to the event bus (for logging/analytics).
+    fn emit_event(&mut self, event: crate::events::SimEvent);
 }

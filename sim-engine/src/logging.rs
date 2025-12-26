@@ -98,3 +98,51 @@ impl EventListener for CsvOracleLogger {
         }
     }
 }
+
+/// Execution logger: logs/executions.csv
+pub struct CsvExecutionLogger {
+    file: std::fs::File,
+}
+
+impl CsvExecutionLogger {
+    pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
+        let header = "ts,account,symbol,side,size_usd,collateral,execution_price,leverage,order_type";
+        let file = open_csv_with_header(dir.as_ref(), "executions.csv", header)?;
+        Ok(Self { file })
+    }
+}
+
+impl EventListener for CsvExecutionLogger {
+    fn on_event(&mut self, event: &SimEvent) {
+        if let SimEvent::OrderExecuted {
+            ts,
+            account,
+            symbol,
+            side,
+            size_usd,
+            collateral,
+            execution_price,
+            leverage,
+            order_type,
+        } = event
+        {
+            let side_str = format!("{:?}", side);
+            let line = format!(
+                "{ts},{account},{symbol},{side},{size_usd},{collateral},{execution_price},{leverage},{order_type}\n",
+                ts = ts,
+                account = account,
+                symbol = symbol,
+                side = side_str,
+                size_usd = size_usd,
+                collateral = collateral,
+                execution_price = execution_price,
+                leverage = leverage,
+                order_type = order_type,
+            );
+
+            if let Err(e) = self.file.write_all(line.as_bytes()) {
+                eprintln!("[CsvExecutionLogger] write error: {e}");
+            }
+        }
+    }
+}

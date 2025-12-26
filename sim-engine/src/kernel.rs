@@ -221,6 +221,19 @@ impl SimulatorApi for Kernel {
     }
 
     fn broadcast(&mut self, from: AgentId, kind: MessageType, payload: MessagePayload) {
+        // Emit event once for broadcast (not per recipient)
+        if let MessageType::OracleTick = kind {
+            if let MessagePayload::OracleTick(p) = &payload {
+                let ev = SimEvent::OracleTick {
+                    ts: self.time_ns,
+                    symbol: p.symbol.clone(),
+                    price_min: p.price.min,
+                    price_max: p.price.max,
+                };
+                self.event_bus.emit(ev);
+            }
+        }
+
         for i in 0..self.agents.len() {
             let id = self.agents[i].id();
             if id == from {
@@ -239,5 +252,9 @@ impl SimulatorApi for Kernel {
 
             self.queue.push(ScheduledMessage(msg));
         }
+    }
+
+    fn emit_event(&mut self, event: SimEvent) {
+        self.event_bus.emit(event);
     }
 }
