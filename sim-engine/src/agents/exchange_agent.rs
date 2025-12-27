@@ -25,16 +25,17 @@ use std::rc::Rc;
 const MAINTENANCE_MARGIN_PCT: f64 = 0.01;
 
 /// Calculate unrealized PnL for a position
-/// Formula: For Long: (current_price - entry_price) / entry_price * size_usd
-///          For Short: (entry_price - current_price) / entry_price * size_usd
-fn calculate_pnl(entry_price: u64, current_price: u64, size_usd: i128, side: Side) -> i64 {
-    if entry_price == 0 {
+/// Uses the same formula as perp-futures engine (pnl.rs):
+///   Long:  pnl = size_tokens * current_price - size_usd
+///   Short: pnl = size_usd - size_tokens * current_price
+fn calculate_pnl(size_usd: i128, size_tokens: i128, current_price: u64, side: Side) -> i64 {
+    if size_tokens == 0 {
         return 0;
     }
-    let price_diff = current_price as i128 - entry_price as i128;
+    let value = size_tokens * current_price as i128;
     let pnl = match side {
-        Side::Long => size_usd * price_diff / entry_price as i128,
-        Side::Short => -size_usd * price_diff / entry_price as i128,
+        Side::Long => value - size_usd,
+        Side::Short => size_usd - value,
     };
     pnl as i64
 }
@@ -58,12 +59,21 @@ fn calculate_liquidation_price(entry_price: u64, leverage: u32, side: Side) -> u
     liq.max(0.0) as u64
 }
 
-/// Check if position is liquidatable at current price
-fn is_liquidatable(current_price: u64, liquidation_price: u64, side: Side) -> bool {
-    match side {
-        Side::Long => current_price <= liquidation_price,
-        Side::Short => current_price >= liquidation_price,
+/// Check if position is liquidatable based on remaining margin
+/// A position is liquidatable when: remaining_margin < maintenance_margin
+/// remaining_margin = collateral + unrealized_pnl
+/// maintenance_margin = size_usd * MAINTENANCE_MARGIN_PCT
+/// 
+/// NOTE: Engine's pricing uses ceiling for Short positions which creates
+/// immediate paper loss. This check uses the actual margin ratio instead
+/// of comparing prices.
+fn is_liquidatable_by_margin(collateral: i128, pnl: i64, size_usd: i128) -> bool {
+    if size_usd == 0 {
+        return false;
     }
+    let remaining_margin = collateral + pnl as i128;
+    let maintenance_margin = (size_usd as f64 * MAINTENANCE_MARGIN_PCT) as i128;
+    remaining_margin < maintenance_margin
 }
 
 // ==== Market Configuration (from scenario JSON) ====
@@ -251,11 +261,8 @@ impl ExchangeAgent {
     /// Called on each oracle tick to track PnL evolution
     fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) {
         // Reverse lookup: account_id -> agent_id
-        let account_to_agent: HashMap<AccountId, AgentId> = self
-            .accounts
-            .iter()
-            .map(|(agent, acc)| (*acc, *agent))
-            .collect();
+        let account_to_agent: HashMap<AccountId, AgentId> =
+            self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
 
         // Emit position snapshots
         for (key, position) in self.executor.state.positions.iter() {
@@ -284,14 +291,20 @@ impl ExchangeAgent {
                 1
             };
 
-            // Calculate PnL (on our side)
-            let pnl = calculate_pnl(entry_price, current_price, position.size_usd, key.side);
+            // Calculate PnL using same formula as perp-futures engine
+            let pnl = calculate_pnl(position.size_usd, position.size_tokens, current_price, key.side);
 
             // Calculate liquidation price (TODO: get from engine)
+            // NOTE: This formula may be inaccurate due to engine's pricing rounding
             let liq_price = calculate_liquidation_price(entry_price, leverage, key.side);
 
-            // Check if liquidatable
-            let liquidatable = is_liquidatable(current_price, liq_price, key.side);
+            // Check if liquidatable using margin-based approach
+            // This is more accurate than price comparison due to engine's ceiling rounding
+            let liquidatable = is_liquidatable_by_margin(
+                position.collateral_amount,
+                pnl,
+                position.size_usd,
+            );
 
             // Get agent_id from account
             let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
