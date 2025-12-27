@@ -34,6 +34,36 @@ pub enum SimEvent {
         price_min: u64,
         price_max: u64,
     },
+
+    /// Position snapshot (periodic state dump for analysis)
+    PositionSnapshot {
+        ts: u64,
+        account: AgentId,
+        symbol: String,
+        side: Side,
+        size_usd: u64,
+        size_tokens: i128,
+        collateral: u64,
+        entry_price: u64,       // Calculated: size_usd / size_tokens
+        current_price: u64,     // From oracle
+        unrealized_pnl: i64,    // Calculated on our side (not from engine)
+        liquidation_price: u64, // TODO(perp-futures): get from engine
+        leverage_actual: u32,   // size_usd / collateral
+        is_liquidatable: bool,  // current_price crossed liquidation_price
+        opened_at_sec: u64,
+    },
+
+    /// Market state snapshot
+    MarketSnapshot {
+        ts: u64,
+        symbol: String,
+        oi_long_usd: u64,
+        oi_short_usd: u64,
+        liquidity_usd: u64,
+        // TODO(perp-futures): need from engine
+        // funding_rate: f64,
+        // borrowing_rate: f64,
+    },
 }
 
 pub trait EventListener {

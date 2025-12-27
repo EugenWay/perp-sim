@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::events::EventListener;
 use crate::kernel::Kernel;
 use crate::latency::{FixedLatency, LatencyModel};
-use crate::logging::{CsvExecutionLogger, CsvOracleLogger, CsvOrderLogger};
+use crate::logging::{CsvExecutionLogger, CsvMarketLogger, CsvOracleLogger, CsvOrderLogger, CsvPositionLogger};
 
 pub struct SimEngine {
     pub kernel: Kernel,
@@ -42,6 +42,26 @@ impl SimEngine {
                     println!("[SimEngine] CsvExecutionLogger attached");
                 }
                 Err(e) => eprintln!("[SimEngine] failed to init CsvExecutionLogger: {e}"),
+            }
+
+            match CsvPositionLogger::new(dir) {
+                Ok(logger) => {
+                    kernel
+                        .event_bus_mut()
+                        .subscribe(Box::new(logger) as Box<dyn EventListener>);
+                    println!("[SimEngine] CsvPositionLogger attached");
+                }
+                Err(e) => eprintln!("[SimEngine] failed to init CsvPositionLogger: {e}"),
+            }
+
+            match CsvMarketLogger::new(dir) {
+                Ok(logger) => {
+                    kernel
+                        .event_bus_mut()
+                        .subscribe(Box::new(logger) as Box<dyn EventListener>);
+                    println!("[SimEngine] CsvMarketLogger attached");
+                }
+                Err(e) => eprintln!("[SimEngine] failed to init CsvMarketLogger: {e}"),
             }
         }
 

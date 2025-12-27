@@ -16,6 +16,56 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+// ==== PnL and Liquidation Price Calculators ====
+// These are calculated on the simulator side (like frontend would do)
+// Positions are stored in the engine, we just read them and calculate PnL
+
+/// Maintenance margin percentage (1% = 0.01)
+/// TODO(perp-futures): Get this from engine config
+const MAINTENANCE_MARGIN_PCT: f64 = 0.01;
+
+/// Calculate unrealized PnL for a position
+/// Formula: For Long: (current_price - entry_price) / entry_price * size_usd
+///          For Short: (entry_price - current_price) / entry_price * size_usd
+fn calculate_pnl(entry_price: u64, current_price: u64, size_usd: i128, side: Side) -> i64 {
+    if entry_price == 0 {
+        return 0;
+    }
+    let price_diff = current_price as i128 - entry_price as i128;
+    let pnl = match side {
+        Side::Long => size_usd * price_diff / entry_price as i128,
+        Side::Short => -size_usd * price_diff / entry_price as i128,
+    };
+    pnl as i64
+}
+
+/// Calculate liquidation price for a position
+/// TODO(perp-futures): This should come from engine API
+/// Formula approximation:
+///   Long:  liq_price = entry_price * (1 - 1/leverage + maintenance_margin)
+///   Short: liq_price = entry_price * (1 + 1/leverage - maintenance_margin)
+fn calculate_liquidation_price(entry_price: u64, leverage: u32, side: Side) -> u64 {
+    if leverage == 0 {
+        return 0;
+    }
+    let lev = leverage as f64;
+    let entry = entry_price as f64;
+
+    let liq = match side {
+        Side::Long => entry * (1.0 - 1.0 / lev + MAINTENANCE_MARGIN_PCT),
+        Side::Short => entry * (1.0 + 1.0 / lev - MAINTENANCE_MARGIN_PCT),
+    };
+    liq.max(0.0) as u64
+}
+
+/// Check if position is liquidatable at current price
+fn is_liquidatable(current_price: u64, liquidation_price: u64, side: Side) -> bool {
+    match side {
+        Side::Long => current_price <= liquidation_price,
+        Side::Short => current_price >= liquidation_price,
+    }
+}
+
 // ==== Market Configuration (from scenario JSON) ====
 
 #[derive(Debug, Clone)]
@@ -190,7 +240,117 @@ impl ExchangeAgent {
         }
     }
 
-    fn process_close_order(&mut self, sim: &mut dyn SimulatorApi, from: AgentId, order: &CloseOrderPayload, now_ns: u64) {
+    fn convert_side_back(side: Side) -> SimSide {
+        match side {
+            Side::Long => SimSide::Buy,
+            Side::Short => SimSide::Sell,
+        }
+    }
+
+    /// Emit snapshots for all positions and market state
+    /// Called on each oracle tick to track PnL evolution
+    fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+        // Reverse lookup: account_id -> agent_id
+        let account_to_agent: HashMap<AccountId, AgentId> = self
+            .accounts
+            .iter()
+            .map(|(agent, acc)| (*acc, *agent))
+            .collect();
+
+        // Emit position snapshots
+        for (key, position) in self.executor.state.positions.iter() {
+            // Find symbol for this market
+            let symbol = self
+                .symbol_to_market
+                .iter()
+                .find(|(_, (mid, _))| *mid == key.market_id)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_else(|| format!("UNKNOWN-{:?}", key.market_id));
+
+            let current_price = self.last_prices.get(&symbol).copied().unwrap_or(0);
+
+            // Calculate entry price from position data
+            // entry_price = size_usd / size_tokens (if size_tokens available)
+            let entry_price = if position.size_tokens != 0 {
+                (position.size_usd / position.size_tokens).unsigned_abs() as u64
+            } else {
+                current_price // fallback
+            };
+
+            // Calculate leverage
+            let leverage = if position.collateral_amount > 0 {
+                (position.size_usd / position.collateral_amount).unsigned_abs() as u32
+            } else {
+                1
+            };
+
+            // Calculate PnL (on our side)
+            let pnl = calculate_pnl(entry_price, current_price, position.size_usd, key.side);
+
+            // Calculate liquidation price (TODO: get from engine)
+            let liq_price = calculate_liquidation_price(entry_price, leverage, key.side);
+
+            // Check if liquidatable
+            let liquidatable = is_liquidatable(current_price, liq_price, key.side);
+
+            // Get agent_id from account
+            let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
+
+            sim.emit_event(SimEvent::PositionSnapshot {
+                ts: now_ns,
+                account: agent_id,
+                symbol: symbol.clone(),
+                side: Self::convert_side_back(key.side),
+                size_usd: position.size_usd as u64,
+                size_tokens: position.size_tokens,
+                collateral: position.collateral_amount as u64,
+                entry_price,
+                current_price,
+                unrealized_pnl: pnl,
+                liquidation_price: liq_price,
+                leverage_actual: leverage,
+                is_liquidatable: liquidatable,
+                opened_at_sec: position.opened_at,
+            });
+
+            // Log if position is liquidatable
+            if liquidatable {
+                println!(
+                    "[Exchange {}] ⚠️ LIQUIDATABLE: {} {:?} agent={} size=${:.2} pnl=${:.2} liq_price=${:.2} current=${:.2}",
+                    self.name,
+                    symbol,
+                    key.side,
+                    agent_id,
+                    position.size_usd as f64 / 1_000_000.0,
+                    pnl as f64 / 1_000_000.0,
+                    liq_price as f64 / 1_000_000.0,
+                    current_price as f64 / 1_000_000.0,
+                );
+            }
+        }
+
+        // Emit market snapshots
+        for market_cfg in &self.markets {
+            let market_id = MarketId(market_cfg.id);
+            if let Some(market) = self.executor.state.markets.get(&market_id) {
+                sim.emit_event(SimEvent::MarketSnapshot {
+                    ts: now_ns,
+                    symbol: market_cfg.symbol.clone(),
+                    oi_long_usd: market.oi_long_usd as u64,
+                    oi_short_usd: market.oi_short_usd as u64,
+                    liquidity_usd: market.liquidity_usd as u64,
+                });
+            }
+        }
+    }
+
+    fn process_close_order(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        from: AgentId,
+        order: &CloseOrderPayload,
+        now_ns: u64,
+    ) {
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
             Some(m) => *m,
             None => {
@@ -290,7 +450,13 @@ impl ExchangeAgent {
         }
     }
 
-    fn process_market_order(&mut self, sim: &mut dyn SimulatorApi, from: AgentId, order: &MarketOrderPayload, now_ns: u64) {
+    fn process_market_order(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        from: AgentId,
+        order: &MarketOrderPayload,
+        now_ns: u64,
+    ) {
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
             Some(m) => *m,
             None => {
@@ -442,6 +608,10 @@ impl Agent for ExchangeAgent {
                             symbol,
                             mid_price as f64 / 1_000_000.0
                         );
+
+                        // Emit position and market snapshots on each price update
+                        let now_ns = sim.now_ns();
+                        self.emit_snapshots(sim, now_ns);
                     }
                 }
             }

@@ -146,3 +146,96 @@ impl EventListener for CsvExecutionLogger {
         }
     }
 }
+
+/// Position snapshot logger: logs/positions.csv
+pub struct CsvPositionLogger {
+    file: std::fs::File,
+}
+
+impl CsvPositionLogger {
+    pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
+        let header = "ts,account,symbol,side,size_usd,size_tokens,collateral,entry_price,current_price,pnl,liquidation_price,leverage,is_liquidatable,opened_at";
+        let file = open_csv_with_header(dir.as_ref(), "positions.csv", header)?;
+        Ok(Self { file })
+    }
+}
+
+impl EventListener for CsvPositionLogger {
+    fn on_event(&mut self, event: &SimEvent) {
+        if let SimEvent::PositionSnapshot {
+            ts,
+            account,
+            symbol,
+            side,
+            size_usd,
+            size_tokens,
+            collateral,
+            entry_price,
+            current_price,
+            unrealized_pnl,
+            liquidation_price,
+            leverage_actual,
+            is_liquidatable,
+            opened_at_sec,
+        } = event
+        {
+            let side_str = format!("{:?}", side);
+            let line = format!(
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+                ts,
+                account,
+                symbol,
+                side_str,
+                size_usd,
+                size_tokens,
+                collateral,
+                entry_price,
+                current_price,
+                unrealized_pnl,
+                liquidation_price,
+                leverage_actual,
+                is_liquidatable,
+                opened_at_sec,
+            );
+
+            if let Err(e) = self.file.write_all(line.as_bytes()) {
+                eprintln!("[CsvPositionLogger] write error: {e}");
+            }
+        }
+    }
+}
+
+/// Market state logger: logs/markets.csv
+pub struct CsvMarketLogger {
+    file: std::fs::File,
+}
+
+impl CsvMarketLogger {
+    pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
+        let header = "ts,symbol,oi_long_usd,oi_short_usd,liquidity_usd";
+        let file = open_csv_with_header(dir.as_ref(), "markets.csv", header)?;
+        Ok(Self { file })
+    }
+}
+
+impl EventListener for CsvMarketLogger {
+    fn on_event(&mut self, event: &SimEvent) {
+        if let SimEvent::MarketSnapshot {
+            ts,
+            symbol,
+            oi_long_usd,
+            oi_short_usd,
+            liquidity_usd,
+        } = event
+        {
+            let line = format!(
+                "{},{},{},{},{}\n",
+                ts, symbol, oi_long_usd, oi_short_usd, liquidity_usd,
+            );
+
+            if let Err(e) = self.file.write_all(line.as_bytes()) {
+                eprintln!("[CsvMarketLogger] write error: {e}");
+            }
+        }
+    }
+}
