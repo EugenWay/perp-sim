@@ -63,7 +63,7 @@ fn calculate_liquidation_price(entry_price: u64, leverage: u32, side: Side) -> u
 /// A position is liquidatable when: remaining_margin < maintenance_margin
 /// remaining_margin = collateral + unrealized_pnl
 /// maintenance_margin = size_usd * MAINTENANCE_MARGIN_PCT
-/// 
+///
 /// NOTE: Engine's pricing uses ceiling for Short positions which creates
 /// immediate paper loss. This check uses the actual margin ratio instead
 /// of comparing prices.
@@ -300,11 +300,7 @@ impl ExchangeAgent {
 
             // Check if liquidatable using margin-based approach
             // This is more accurate than price comparison due to engine's ceiling rounding
-            let liquidatable = is_liquidatable_by_margin(
-                position.collateral_amount,
-                pnl,
-                position.size_usd,
-            );
+            let liquidatable = is_liquidatable_by_margin(position.collateral_amount, pnl, position.size_usd);
 
             // Get agent_id from account
             let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
