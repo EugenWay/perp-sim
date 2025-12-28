@@ -65,10 +65,15 @@ impl Agent for OracleAgent {
     fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
         self.block_number += 1;
 
-        println!(
-            "\n[Oracle {}] ========== BLOCK #{} at t={} ns ==========",
-            self.name, self.block_number, now_ns
-        );
+        // Only print every 10th block to reduce noise
+        let verbose = self.block_number <= 3 || self.block_number % 10 == 0;
+
+        if verbose {
+            println!(
+                "[Oracle {}] BLOCK #{} at t={} ns",
+                self.name, self.block_number, now_ns
+            );
+        }
 
         let symbol_refs: Vec<&str> = self.symbols.iter().map(|s| s.as_str()).collect();
         let results = self.price_provider.fetch_batch(&symbol_refs);
@@ -76,25 +81,14 @@ impl Agent for OracleAgent {
         for (symbol, result) in self.symbols.iter().zip(results.into_iter()) {
             match result {
                 Ok(signed_data) => {
-                    let price_usd = signed_data.price_usd_micro as f64 / 1_000_000.0;
-                    let confidence_usd = signed_data.confidence.map(|c| c as f64 / 1_000_000.0).unwrap_or(0.0);
                     let confidence = signed_data.confidence.unwrap_or(0);
-
-                    // Compute min/max from confidence interval (price ± confidence)
                     let min = signed_data.price_usd_micro.saturating_sub(confidence);
                     let max = signed_data.price_usd_micro.saturating_add(confidence);
 
-                    println!(
-                        "[Oracle {}] {} = ${:.2} (±${:.2}) [${:.2}-${:.2}] [{}] sig:{} bytes",
-                        self.name,
-                        symbol,
-                        price_usd,
-                        confidence_usd,
-                        min as f64 / 1_000_000.0,
-                        max as f64 / 1_000_000.0,
-                        signed_data.provider_name,
-                        signed_data.signature.len()
-                    );
+                    if verbose {
+                        let price_usd = signed_data.price_usd_micro as f64 / 1_000_000.0;
+                        println!("[Oracle] {} = ${:.2}", symbol, price_usd);
+                    }
 
                     let payload = MessagePayload::OracleTick(OracleTickPayload {
                         symbol: symbol.clone(),
@@ -103,7 +97,6 @@ impl Agent for OracleAgent {
                         signature: signed_data.signature,
                     });
 
-                    // Broadcast to all agents so SmartTraders can track prices
                     sim.broadcast(self.id, MessageType::OracleTick, payload);
                 }
                 Err(e) => {

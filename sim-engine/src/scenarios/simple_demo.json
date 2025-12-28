@@ -1,6 +1,6 @@
 {
   "scenario_name": "simple_demo",
-  "duration_sec": 180,
+  "duration_sec": 300,
   "logs_dir": "logs",
   "exchange": {
     "id": 1,
@@ -25,8 +25,8 @@
       "name": "PythOracle",
       "symbols": ["ETH-USD"],
       "provider": "Pyth",
-      "cache_duration_ms": 5000,
-      "wake_interval_ms": 5000
+      "cache_duration_ms": 3000,
+      "wake_interval_ms": 3000
     }
   ],
   "traders": [
@@ -62,7 +62,7 @@
     },
     {
       "id": 30,
-      "name": "RiskyTrader10x",
+      "name": "Risky10x",
       "symbol": "ETH-USD",
       "strategy": "risky",
       "leverage": 10,
@@ -71,7 +71,7 @@
     },
     {
       "id": 31,
-      "name": "RiskyTrader20x",
+      "name": "Risky20x",
       "symbol": "ETH-USD",
       "strategy": "risky",
       "leverage": 20,

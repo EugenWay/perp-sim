@@ -2,7 +2,7 @@ use crate::agents::Agent;
 use crate::events::SimEvent;
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, OracleTickPayload,
-    Side as SimSide, SimulatorApi,
+    PositionLiquidatedPayload, Side as SimSide, SimulatorApi,
 };
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
@@ -259,10 +259,13 @@ impl ExchangeAgent {
 
     /// Emit snapshots for all positions and market state
     /// Called on each oracle tick to track PnL evolution
-    fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+    /// Returns list of (agent_id, symbol, side, size_usd, pnl, collateral) for liquidatable positions
+    fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) -> Vec<(AgentId, String, Side, i128, i64, i128)> {
         // Reverse lookup: account_id -> agent_id
         let account_to_agent: HashMap<AccountId, AgentId> =
             self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
+
+        let mut to_liquidate = Vec::new();
 
         // Emit position snapshots
         for (key, position) in self.executor.state.positions.iter() {
@@ -322,18 +325,24 @@ impl ExchangeAgent {
                 opened_at_sec: position.opened_at,
             });
 
-            // Log if position is liquidatable
-            if liquidatable {
+            // Collect liquidatable positions
+            if liquidatable && agent_id != 0 {
+                to_liquidate.push((
+                    agent_id,
+                    symbol.clone(),
+                    key.side,
+                    position.size_usd,
+                    pnl,
+                    position.collateral_amount,
+                ));
                 println!(
-                    "[Exchange {}] ⚠️ LIQUIDATABLE: {} {:?} agent={} size=${:.2} pnl=${:.2} liq_price=${:.2} current=${:.2}",
+                    "[Exchange {}] ⚠️ LIQUIDATING: {} {:?} agent={} size=${:.2} pnl=${:.2}",
                     self.name,
                     symbol,
                     key.side,
                     agent_id,
                     position.size_usd as f64 / 1_000_000.0,
                     pnl as f64 / 1_000_000.0,
-                    liq_price as f64 / 1_000_000.0,
-                    current_price as f64 / 1_000_000.0,
                 );
             }
         }
@@ -351,6 +360,30 @@ impl ExchangeAgent {
                 });
             }
         }
+
+        to_liquidate
+    }
+
+    /// Send liquidation notification to trader
+    fn notify_liquidation(
+        &self,
+        sim: &mut dyn SimulatorApi,
+        agent_id: AgentId,
+        symbol: String,
+        side: Side,
+        size_usd: i128,
+        pnl: i64,
+        collateral: i128,
+    ) {
+        let sim_side = Self::convert_side_back(side);
+        let payload = MessagePayload::PositionLiquidated(PositionLiquidatedPayload {
+            symbol,
+            side: sim_side,
+            size_usd,
+            pnl: pnl as i128,
+            collateral_lost: collateral,
+        });
+        sim.send(self.id, agent_id, MessageType::PositionLiquidated, payload);
     }
 
     fn process_close_order(
@@ -611,16 +644,15 @@ impl Agent for ExchangeAgent {
                         let mid_price = (price.min + price.max) / 2;
                         self.last_prices.insert(symbol.clone(), mid_price);
 
-                        println!(
-                            "[Exchange {}] PRICE {} = ${:.2}",
-                            self.name,
-                            symbol,
-                            mid_price as f64 / 1_000_000.0
-                        );
-
                         // Emit position and market snapshots on each price update
+                        // Also check for liquidatable positions
                         let now_ns = sim.now_ns();
-                        self.emit_snapshots(sim, now_ns);
+                        let to_liquidate = self.emit_snapshots(sim, now_ns);
+
+                        // Send liquidation notifications to affected traders
+                        for (agent_id, sym, side, size_usd, pnl, collateral) in to_liquidate {
+                            self.notify_liquidation(sim, agent_id, sym, side, size_usd, pnl, collateral);
+                        }
                     }
                 }
             }

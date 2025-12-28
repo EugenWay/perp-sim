@@ -1,6 +1,7 @@
 use crate::agents::Agent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, Side, SimulatorApi,
+    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, PositionLiquidatedPayload,
+    Side, SimulatorApi,
 };
 
 pub struct TraderAgent {
@@ -112,7 +113,34 @@ impl Agent for TraderAgent {
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
-        println!("[Trader {}] received {:?} from {}", self.name, msg.msg_type, msg.from);
+        if let MessageType::PositionLiquidated = msg.msg_type {
+            if let MessagePayload::PositionLiquidated(PositionLiquidatedPayload {
+                symbol,
+                side,
+                pnl,
+                collateral_lost,
+                ..
+            }) = &msg.payload
+            {
+                let side_str = match side {
+                    Side::Buy => "LONG",
+                    Side::Sell => "SHORT",
+                };
+                println!(
+                    "[Trader {}] ⚠️ LIQUIDATED {} {} pnl=${:.2} lost=${:.2}",
+                    self.name,
+                    symbol,
+                    side_str,
+                    *pnl as f64 / 1_000_000.0,
+                    *collateral_lost as f64 / 1_000_000.0
+                );
+                // Reset position tracking
+                match side {
+                    Side::Buy => self.has_long_position = false,
+                    Side::Sell => self.has_short_position = false,
+                }
+            }
+        }
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {

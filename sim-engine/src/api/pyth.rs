@@ -139,7 +139,7 @@ impl PythProvider {
             self.base_url, feed_id
         );
         
-        println!("[Pyth] fetching signed price for {}", symbol);
+        // Silent fetch - logging done by OracleAgent
         
         let response = self
             .client
@@ -162,10 +162,7 @@ impl PythProvider {
             return Err("No VAA signature received".into());
         }
         
-        println!(
-            "[Pyth] received VAA signature: {} bytes",
-            data.binary.data[0].len()
-        );
+        // VAA signature received: {} bytes - silent
         
         Ok(data)
     }
@@ -194,7 +191,7 @@ impl PythProvider {
             url.push_str(&format!("ids[]={}&", id));
         }
         
-        println!("[Pyth] fetching batch prices for {} symbols", symbols.len());
+        // Batch fetch for {} symbols - silent
         
         let response = self
             .client

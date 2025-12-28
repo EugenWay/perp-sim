@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
+use std::time::{Duration, Instant};
 
 use crate::agents::Agent;
 use crate::events::{EventBus, SimEvent};
@@ -39,7 +40,11 @@ pub struct Kernel {
     latency: Box<dyn LatencyModel>,
     queue: BinaryHeap<ScheduledMessage>,
     agents: Vec<Box<dyn Agent>>,
+    /// O(1) lookup: AgentId -> index in agents vec
+    agent_index: HashMap<AgentId, usize>,
     event_bus: EventBus,
+    /// If Some, run in realtime mode with this delay between ticks
+    realtime_tick_ms: Option<u64>,
 }
 
 impl Kernel {
@@ -58,8 +63,16 @@ impl Kernel {
             latency,
             queue: BinaryHeap::new(),
             agents: Vec::new(),
+            agent_index: HashMap::new(),
             event_bus: EventBus::new(),
+            realtime_tick_ms: None,
         }
+    }
+
+    /// Enable realtime mode with specified tick interval in milliseconds.
+    pub fn set_realtime(&mut self, tick_ms: u64) {
+        self.realtime_tick_ms = Some(tick_ms);
+        println!("[Kernel] realtime mode enabled: {}ms per tick", tick_ms);
     }
 
     /// Access to the event bus (for SimEngine to subscribe loggers).
@@ -69,10 +82,13 @@ impl Kernel {
 
     /// Add a new agent into the simulation.
     pub fn add_agent(&mut self, mut agent: Box<dyn Agent>) {
-        println!("[Kernel] registering agent {} (id={})", agent.name(), agent.id());
+        let id = agent.id();
+        println!("[Kernel] registering agent {} (id={})", agent.name(), id);
         // Let the agent initialize itself using the simulator API.
         agent.on_start(self);
+        let idx = self.agents.len();
         self.agents.push(agent);
+        self.agent_index.insert(id, idx);
     }
 
     /// Run the simulation for `max_steps` ticks, or until the queue is empty.
@@ -83,12 +99,24 @@ impl Kernel {
             self.tick_ns
         );
         println!("[Kernel] start time: {} ns", self.time_ns);
+        if let Some(ms) = self.realtime_tick_ms {
+            println!("[Kernel] REALTIME MODE: {}ms between ticks", ms);
+        }
 
         for step in 0..max_steps {
+            let tick_start = Instant::now();
+
             // Advance virtual time.
             self.time_ns = self.time_ns.saturating_add(self.tick_ns);
 
-            println!("\n[Kernel] === TICK {} at t={} ns ===", step + 1, self.time_ns);
+            // In realtime mode, print less verbose output
+            if self.realtime_tick_ms.is_some() {
+                if step % 10 == 0 {
+                    println!("[Kernel] TICK {} (realtime)", step + 1);
+                }
+            } else {
+                println!("\n[Kernel] === TICK {} at t={} ns ===", step + 1, self.time_ns);
+            }
 
             // Deliver all messages whose delivery time is <= now.
             loop {
@@ -105,8 +133,8 @@ impl Kernel {
                 let msg = sm.0;
                 let target = msg.to;
 
-                // Find index of target agent (immutable borrow only).
-                let idx_opt = self.agents.iter().position(|a| a.id() == target);
+                // O(1) lookup using agent_index
+                let idx_opt = self.agent_index.get(&target).copied();
 
                 if let Some(idx) = idx_opt {
                     // Temporarily move agent out of the vector to avoid
@@ -135,6 +163,15 @@ impl Kernel {
             if self.queue.is_empty() {
                 println!("\n[Kernel] queue is empty, stopping early after {} ticks", step + 1);
                 break;
+            }
+
+            // Realtime mode: wait for the remaining time of this tick
+            if let Some(tick_ms) = self.realtime_tick_ms {
+                let elapsed = tick_start.elapsed();
+                let target = Duration::from_millis(tick_ms);
+                if elapsed < target {
+                    std::thread::sleep(target - elapsed);
+                }
             }
         }
 

@@ -8,9 +8,12 @@
 use crate::agents::Agent;
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, Side, SimulatorApi,
+    OracleTickPayload, PositionLiquidatedPayload, Side, SimulatorApi,
 };
 use std::collections::VecDeque;
+
+/// Default starting balance for each trader (in micro-USD = $10,000)
+const DEFAULT_BALANCE: i128 = 10_000_000_000;
 
 /// Trading strategy configuration
 #[derive(Debug, Clone)]
@@ -59,6 +62,10 @@ pub struct SmartTraderAgent {
     position_side: Option<Side>,
     position_opened_at: u64,
 
+    // Balance tracking (micro-USD)
+    balance: i128,
+    collateral_in_position: i128, // How much is locked in current position
+
     // Price tracking (for trend following)
     price_history: VecDeque<(u64, u64)>, // (timestamp_ns, price)
     current_price: Option<u64>,
@@ -66,6 +73,8 @@ pub struct SmartTraderAgent {
     // Stats
     trades_opened: u32,
     trades_closed: u32,
+    liquidations: u32,
+    total_pnl: i128,
 }
 
 impl SmartTraderAgent {
@@ -81,11 +90,20 @@ impl SmartTraderAgent {
             has_position: false,
             position_side: None,
             position_opened_at: 0,
+            balance: DEFAULT_BALANCE,
+            collateral_in_position: 0,
             price_history: VecDeque::with_capacity(100),
             current_price: None,
             trades_opened: 0,
             trades_closed: 0,
+            liquidations: 0,
+            total_pnl: 0,
         }
+    }
+
+    /// Check if trader has enough balance to open a position
+    fn can_afford(&self, collateral_needed: i128) -> bool {
+        self.balance >= collateral_needed
     }
 
     fn get_leverage(&self) -> u32 {
@@ -98,6 +116,19 @@ impl SmartTraderAgent {
 
     fn open_position(&mut self, sim: &mut dyn SimulatorApi, side: Side, now_ns: u64) {
         let leverage = self.get_leverage();
+        let collateral_needed = self.qty as i128; // qty is collateral in micro-USD
+
+        // Check if we can afford it
+        if !self.can_afford(collateral_needed) {
+            println!(
+                "[SmartTrader {}] SKIP OPEN - insufficient balance: ${:.2} < ${:.2}",
+                self.name,
+                self.balance as f64 / 1_000_000.0,
+                collateral_needed as f64 / 1_000_000.0
+            );
+            return;
+        }
+
         let payload = MessagePayload::MarketOrder(MarketOrderPayload {
             symbol: self.symbol.clone(),
             side,
@@ -111,8 +142,12 @@ impl SmartTraderAgent {
         };
 
         println!(
-            "[SmartTrader {}] OPEN {} {}x qty={}",
-            self.name, side_str, leverage, self.qty
+            "[SmartTrader {}] OPEN {} {}x qty=${:.2} (balance: ${:.2})",
+            self.name, 
+            side_str, 
+            leverage, 
+            self.qty as f64 / 1_000_000.0,
+            self.balance as f64 / 1_000_000.0
         );
 
         sim.send(
@@ -121,6 +156,10 @@ impl SmartTraderAgent {
             MessageType::MarketOrder,
             payload,
         );
+
+        // Lock collateral
+        self.balance -= collateral_needed;
+        self.collateral_in_position = collateral_needed;
 
         self.has_position = true;
         self.position_side = Some(side);
@@ -140,7 +179,12 @@ impl SmartTraderAgent {
                 Side::Sell => "SHORT",
             };
 
-            println!("[SmartTrader {}] CLOSE {}", self.name, side_str);
+            println!(
+                "[SmartTrader {}] CLOSE {} (balance before return: ${:.2})",
+                self.name, 
+                side_str,
+                self.balance as f64 / 1_000_000.0
+            );
 
             sim.send(
                 self.id,
@@ -149,10 +193,41 @@ impl SmartTraderAgent {
                 payload,
             );
 
+            // Return collateral (actual PnL will come from exchange notification)
+            // For now, assume we get collateral back (exchange will notify actual result)
+            self.balance += self.collateral_in_position;
+            self.collateral_in_position = 0;
+
             self.has_position = false;
             self.position_side = None;
             self.trades_closed += 1;
         }
+    }
+
+    /// Handle notification that our position was liquidated
+    fn handle_liquidation(&mut self, payload: &PositionLiquidatedPayload) {
+        println!(
+            "[SmartTrader {}] ⚠️ LIQUIDATED {} size=${:.2} pnl=${:.2} lost=${:.2}",
+            self.name,
+            match payload.side { Side::Buy => "LONG", Side::Sell => "SHORT" },
+            payload.size_usd as f64 / 1_000_000.0,
+            payload.pnl as f64 / 1_000_000.0,
+            payload.collateral_lost as f64 / 1_000_000.0
+        );
+
+        // Lost our collateral
+        self.collateral_in_position = 0;
+        self.has_position = false;
+        self.position_side = None;
+        self.liquidations += 1;
+        self.total_pnl += payload.pnl;
+
+        println!(
+            "[SmartTrader {}] Balance after liquidation: ${:.2} (total PnL: ${:.2})",
+            self.name,
+            self.balance as f64 / 1_000_000.0,
+            self.total_pnl as f64 / 1_000_000.0
+        );
     }
 
     fn execute_hodler_strategy(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
@@ -314,21 +389,31 @@ impl Agent for SmartTraderAgent {
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
-        // Listen to oracle ticks to track prices
-        if let MessageType::OracleTick = msg.msg_type {
-            if let MessagePayload::OracleTick(OracleTickPayload { symbol, price, .. }) = &msg.payload
-            {
-                if *symbol == self.symbol {
-                    let mid_price = (price.min + price.max) / 2;
-                    self.current_price = Some(mid_price);
+        match msg.msg_type {
+            // Listen to oracle ticks to track prices
+            MessageType::OracleTick => {
+                if let MessagePayload::OracleTick(OracleTickPayload { symbol, price, .. }) = &msg.payload {
+                    if *symbol == self.symbol {
+                        let mid_price = (price.min + price.max) / 2;
+                        self.current_price = Some(mid_price);
 
-                    // Store in history (keep last 100 prices)
-                    self.price_history.push_back((msg.at, mid_price));
-                    if self.price_history.len() > 100 {
-                        self.price_history.pop_front();
+                        // Store in history (keep last 100 prices)
+                        self.price_history.push_back((msg.at, mid_price));
+                        if self.price_history.len() > 100 {
+                            self.price_history.pop_front();
+                        }
                     }
                 }
             }
+            // Handle liquidation notification
+            MessageType::PositionLiquidated => {
+                if let MessagePayload::PositionLiquidated(payload) = &msg.payload {
+                    if payload.symbol == self.symbol {
+                        self.handle_liquidation(payload);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -339,9 +424,21 @@ impl Agent for SmartTraderAgent {
             TradingStrategy::TrendFollower { leverage, .. } => format!("TrendFollower({}x)", leverage),
         };
 
+        let pnl_str = if self.total_pnl >= 0 {
+            format!("+${:.2}", self.total_pnl as f64 / 1_000_000.0)
+        } else {
+            format!("-${:.2}", (-self.total_pnl) as f64 / 1_000_000.0)
+        };
+
         println!(
-            "[SmartTrader {}] stopping. Strategy={}, opened={}, closed={}, has_position={}",
-            self.name, strategy_name, self.trades_opened, self.trades_closed, self.has_position
+            "[SmartTrader {}] FINAL: strategy={}, opened={}, closed={}, liquidated={}, pnl={}, balance=${:.2}",
+            self.name, 
+            strategy_name, 
+            self.trades_opened, 
+            self.trades_closed, 
+            self.liquidations,
+            pnl_str,
+            self.balance as f64 / 1_000_000.0
         );
     }
 }

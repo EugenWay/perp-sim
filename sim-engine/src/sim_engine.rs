@@ -74,6 +74,15 @@ impl SimEngine {
         Self::new(latency, tick_ns, Some(Path::new("logs")))
     }
 
+    /// Create engine for realtime mode with specified tick interval
+    pub fn with_realtime(tick_ms: u64) -> Self {
+        let latency: Box<dyn LatencyModel> = Box::new(FixedLatency::new(1_000_000, 500_000));
+        let tick_ns = tick_ms * 1_000_000;
+        let mut engine = Self::new(latency, tick_ns, Some(Path::new("logs")));
+        engine.kernel.set_realtime(tick_ms);
+        engine
+    }
+
     pub fn run(&mut self, max_steps: usize) {
         self.kernel.run(max_steps);
     }

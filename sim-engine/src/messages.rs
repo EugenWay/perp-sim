@@ -20,6 +20,7 @@ pub enum MessageType {
     OrderRejected,
     LiquidationScan,
     LiquidationExecute,
+    PositionLiquidated, // Notify trader their position was liquidated
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +75,16 @@ pub struct LiquidationTaskPayload {
     pub max_positions: u32,
 }
 
+/// Notification sent to trader when their position is liquidated
+#[derive(Debug, Clone)]
+pub struct PositionLiquidatedPayload {
+    pub symbol: String,
+    pub side: Side,
+    pub size_usd: i128,
+    pub pnl: i128,           // Final PnL (negative = loss)
+    pub collateral_lost: i128,
+}
+
 #[derive(Debug, Clone)]
 pub enum MessagePayload {
     Empty,
@@ -83,6 +94,7 @@ pub enum MessagePayload {
     CloseOrder(CloseOrderPayload),
     OracleTick(OracleTickPayload),
     LiquidationTask(LiquidationTaskPayload),
+    PositionLiquidated(PositionLiquidatedPayload),
 }
 
 /// Core message type that flows through the Kernel.

@@ -1,13 +1,15 @@
 use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
+    human_agent::HumanAgent,
     oracle_agent::OracleAgent,
     smart_trader_agent::{SmartTraderAgent, SmartTraderConfig, TradingStrategy},
     trader_agent::TraderAgent,
 };
-use crate::messages::Side;
-use crate::api::{CachedPriceProvider, PythProvider};
+use crate::api::{ApiServer, CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
+use crate::messages::Side;
 use crate::sim_engine::SimEngine;
+use crossbeam_channel;
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -72,19 +74,19 @@ struct SmartTraderJsonConfig {
     id: u32,
     name: String,
     symbol: String,
-    strategy: String,              // "hodler", "risky", "trend_follower"
+    strategy: String, // "hodler", "risky", "trend_follower"
     #[serde(default = "default_side")]
-    side: String,                  // "long" or "short" (for hodler)
+    side: String, // "long" or "short" (for hodler)
     #[serde(default = "default_leverage")]
     leverage: u32,
     #[serde(default = "default_qty")]
     qty: u64,
     #[serde(default = "default_hold_duration")]
-    hold_duration_sec: u64,        // for hodler
+    hold_duration_sec: u64, // for hodler
     #[serde(default = "default_lookback")]
-    lookback_sec: u64,             // for trend_follower
+    lookback_sec: u64, // for trend_follower
     #[serde(default = "default_threshold")]
-    threshold_pct: f64,            // for trend_follower
+    threshold_pct: f64, // for trend_follower
     #[serde(default = "default_smart_wake_interval")]
     wake_interval_ms: u64,
 }
@@ -204,11 +206,8 @@ fn run_with_config(config: SimConfig) {
         let file = File::create(&orders_path).expect("cannot create orders.csv");
         let writer = RefCell::new(BufWriter::new(file));
 
-        writeln!(
-            writer.borrow_mut(),
-            "ts,from,to,msg_type,symbol,side,price,qty,reason"
-        )
-        .expect("cannot write CSV header");
+        writeln!(writer.borrow_mut(), "ts,from,to,msg_type,symbol,side,price,qty,reason")
+            .expect("cannot write CSV header");
 
         let listener = move |ev: &SimEvent| {
             if let SimEvent::OrderLog {
@@ -278,10 +277,7 @@ fn run_with_config(config: SimConfig) {
                 Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
             }
             _ => {
-                eprintln!(
-                    "[Scenario] Unknown provider: {}, using Pyth",
-                    oracle_cfg.provider
-                );
+                eprintln!("[Scenario] Unknown provider: {}, using Pyth", oracle_cfg.provider);
                 let pyth = PythProvider::new();
                 Box::new(CachedPriceProvider::new(pyth, cache_duration_sec))
             }
@@ -330,10 +326,7 @@ fn run_with_config(config: SimConfig) {
                 leverage: smart_cfg.leverage,
             },
             _ => {
-                eprintln!(
-                    "[Scenario] Unknown strategy: {}, using Risky",
-                    smart_cfg.strategy
-                );
+                eprintln!("[Scenario] Unknown strategy: {}, using Risky", smart_cfg.strategy);
                 TradingStrategy::Risky {
                     leverage: smart_cfg.leverage,
                 }
@@ -373,4 +366,145 @@ pub fn run_scenario(scenario_name: &str) {
     });
 
     run_with_config(config);
+}
+
+/// Run simulation in realtime mode with HTTP API for HumanAgent
+pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
+    let config_path = format!("sim-engine/src/scenarios/{}.json", scenario_name);
+
+    let config = SimConfig::from_file(&config_path).unwrap_or_else(|e| {
+        eprintln!("[Scenario] Failed to load {}: {}", config_path, e);
+        SimConfig::default()
+    });
+
+    println!("[Scenario] Loading: {} (REALTIME)", config.scenario_name);
+    println!("[Scenario] Tick: {}ms, API port: {}", tick_ms, api_port);
+
+    let max_ticks = usize::MAX; // Run indefinitely
+
+    let mut engine = SimEngine::with_realtime(tick_ms);
+
+    let _ = fs::create_dir_all(&config.logs_dir);
+
+    // Start API server
+    let (response_tx, response_rx) = crossbeam_channel::unbounded();
+    let (_api_server, _cmd_tx, cmd_rx) = ApiServer::start(api_port, response_rx);
+
+    // Create markets
+    let markets: Vec<MarketConfig> = config
+        .exchange
+        .markets
+        .iter()
+        .map(|m| MarketConfig {
+            id: m.id,
+            symbol: m.symbol.clone(),
+            index_token: m.index_token.clone(),
+            collateral_token: m.collateral_token.clone(),
+            collateral_amount: m.initial_liquidity.collateral_amount,
+            index_amount: m.initial_liquidity.index_amount,
+            liquidity_usd: m.initial_liquidity.liquidity_usd,
+        })
+        .collect();
+
+    engine.kernel.add_agent(Box::new(ExchangeAgent::new(
+        config.exchange.id,
+        config.exchange.name.clone(),
+        markets,
+    )));
+
+    // Add oracles
+    for oracle_cfg in &config.oracles {
+        let provider: Box<dyn crate::api::PriceProvider> = {
+            let pyth = PythProvider::new();
+            Box::new(CachedPriceProvider::new(pyth, oracle_cfg.cache_duration_ms / 1000))
+        };
+
+        engine.kernel.add_agent(Box::new(OracleAgent::new(
+            oracle_cfg.id,
+            oracle_cfg.name.clone(),
+            oracle_cfg.symbols.clone(),
+            config.exchange.id,
+            oracle_cfg.wake_interval_ms * 1_000_000,
+            provider,
+        )));
+    }
+
+    // Add regular traders from scenario
+    for trader_cfg in &config.traders {
+        engine.kernel.add_agent(Box::new(TraderAgent::new(
+            trader_cfg.id,
+            trader_cfg.name.clone(),
+            config.exchange.id,
+            trader_cfg.symbol.clone(),
+        )));
+    }
+
+    // Add smart traders from scenario
+    for smart_cfg in &config.smart_traders {
+        let side = match smart_cfg.side.to_lowercase().as_str() {
+            "short" | "sell" => Side::Sell,
+            _ => Side::Buy,
+        };
+
+        let strategy = match smart_cfg.strategy.to_lowercase().as_str() {
+            "hodler" => TradingStrategy::Hodler {
+                side,
+                hold_duration_sec: smart_cfg.hold_duration_sec,
+                leverage: smart_cfg.leverage,
+            },
+            "risky" => TradingStrategy::Risky {
+                leverage: smart_cfg.leverage,
+            },
+            "trend_follower" | "trend" => TradingStrategy::TrendFollower {
+                lookback_sec: smart_cfg.lookback_sec,
+                threshold_pct: smart_cfg.threshold_pct,
+                leverage: smart_cfg.leverage,
+            },
+            _ => TradingStrategy::Risky {
+                leverage: smart_cfg.leverage,
+            },
+        };
+
+        let smart_config = SmartTraderConfig {
+            name: smart_cfg.name.clone(),
+            exchange_id: config.exchange.id,
+            symbol: smart_cfg.symbol.clone(),
+            strategy,
+            qty: smart_cfg.qty,
+            wake_interval_ms: smart_cfg.wake_interval_ms,
+        };
+
+        engine
+            .kernel
+            .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
+    }
+
+    // Add HumanAgent (id=100, reserved)
+    engine.kernel.add_agent(Box::new(HumanAgent::new(
+        100,
+        "HumanTrader".to_string(),
+        config.exchange.id,
+        cmd_rx,
+        response_tx,
+        tick_ms,
+    )));
+
+    println!();
+    println!("=== REALTIME MODE ===");
+    println!(
+        "Agents: {} traders + {} smart_traders + HumanAgent",
+        config.traders.len(),
+        config.smart_traders.len()
+    );
+    println!();
+    println!("=== API Endpoints ===");
+    println!("  POST http://localhost:{}/order", api_port);
+    println!("       {{\"action\":\"open\", \"symbol\":\"ETH-USD\", \"side\":\"long\", \"qty\":1, \"leverage\":5}}");
+    println!("  POST http://localhost:{}/close  {{\"symbol\":\"ETH-USD\"}}", api_port);
+    println!("  GET  http://localhost:{}/status", api_port);
+    println!();
+    println!("Press Ctrl+C to stop");
+    println!();
+
+    engine.run(max_ticks);
 }
