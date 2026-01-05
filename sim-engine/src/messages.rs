@@ -1,6 +1,6 @@
 pub type AgentId = u32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MessageType {
     Wakeup,
     LimitOrder,
@@ -23,9 +23,14 @@ pub enum MessageType {
     PositionLiquidated, // Notify trader their position was liquidated
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Side {
+    #[serde(alias = "long", alias = "Long")]
     Buy,
+    #[serde(alias = "short", alias = "Short")]
     Sell,
 }
 

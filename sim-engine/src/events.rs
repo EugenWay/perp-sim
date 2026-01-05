@@ -1,6 +1,8 @@
 use crate::messages::{AgentId, MessageType, Side};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event_type")]
 pub enum SimEvent {
     /// Order submitted (before execution)
     OrderLog {
