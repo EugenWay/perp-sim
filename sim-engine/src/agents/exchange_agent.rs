@@ -63,10 +63,6 @@ fn calculate_liquidation_price(entry_price: u64, leverage: u32, side: Side) -> u
 /// A position is liquidatable when: remaining_margin < maintenance_margin
 /// remaining_margin = collateral + unrealized_pnl
 /// maintenance_margin = size_usd * MAINTENANCE_MARGIN_PCT
-///
-/// NOTE: Engine's pricing uses ceiling for Short positions which creates
-/// immediate paper loss. This check uses the actual margin ratio instead
-/// of comparing prices.
 fn is_liquidatable_by_margin(collateral: i128, pnl: i64, size_usd: i128) -> bool {
     if size_usd == 0 {
         return false;
@@ -87,6 +83,8 @@ pub struct MarketConfig {
     pub collateral_amount: i128,
     pub index_amount: i128,
     pub liquidity_usd: i128,
+    pub index_decimals: u32,      // Token decimals (ETH=18, BTC=8)
+    pub collateral_decimals: u32, // Collateral decimals (USDT=6)
 }
 
 // ==== SimOracle: adapter for perp-futures Oracle trait ====
@@ -172,6 +170,8 @@ pub struct ExchangeAgent {
 
     /// Maps symbol -> (market_id, collateral_asset)
     symbol_to_market: HashMap<String, (MarketId, AssetId)>,
+    /// Maps symbol -> (index_decimals, collateral_decimals)
+    symbol_decimals: HashMap<String, (u32, u32)>,
 }
 
 impl ExchangeAgent {
@@ -180,6 +180,7 @@ impl ExchangeAgent {
 
         let mut state = State::default();
         let mut symbol_to_market = HashMap::new();
+        let mut symbol_decimals = HashMap::new();
 
         // Setup each market from config
         for (idx, market_cfg) in markets.iter().enumerate() {
@@ -206,13 +207,18 @@ impl ExchangeAgent {
             }
 
             symbol_to_market.insert(market_cfg.symbol.clone(), (market_id, collateral_asset));
+            symbol_decimals.insert(
+                market_cfg.symbol.clone(),
+                (market_cfg.index_decimals, market_cfg.collateral_decimals),
+            );
 
             println!(
-                "[Exchange {}] Market {} ({}) initialized: liquidity=${:.0}M",
+                "[Exchange {}] Market {} ({}) initialized: liquidity=${:.0}M, decimals={}",
                 name,
                 market_cfg.symbol,
                 market_cfg.id,
-                market_cfg.liquidity_usd as f64 / 1_000_000_000_000.0
+                market_cfg.liquidity_usd as f64 / 1_000_000_000_000.0,
+                market_cfg.index_decimals
             );
         }
 
@@ -230,6 +236,7 @@ impl ExchangeAgent {
             accounts: HashMap::new(),
             next_account_idx: 0,
             symbol_to_market,
+            symbol_decimals,
         }
     }
 
@@ -298,11 +305,9 @@ impl ExchangeAgent {
             let pnl = calculate_pnl(position.size_usd, position.size_tokens, current_price, key.side);
 
             // Calculate liquidation price (TODO: get from engine)
-            // NOTE: This formula may be inaccurate due to engine's pricing rounding
             let liq_price = calculate_liquidation_price(entry_price, leverage, key.side);
 
             // Check if liquidatable using margin-based approach
-            // This is more accurate than price comparison due to engine's ceiling rounding
             let liquidatable = is_liquidatable_by_margin(position.collateral_amount, pnl, position.size_usd);
 
             // Get agent_id from account
@@ -513,8 +518,9 @@ impl ExchangeAgent {
         let account = self.get_or_create_account(from);
         let side = Self::convert_side(order.side);
 
-        let price = match self.last_prices.get(&order.symbol) {
-            Some(p) => *p as Usd,
+        // Get both prices from cache
+        let (price_min, price_max) = match self.price_cache.borrow().get(&order.symbol) {
+            Some(p) => p,
             None => {
                 println!(
                     "[Exchange {}] REJECTED from {}: no price for {}",
@@ -524,7 +530,24 @@ impl ExchangeAgent {
             }
         };
 
-        // qty * price = size in USD
+        // Choose price based on side to match engine's pricing logic:
+        // - LONG: engine divides size_delta_usd by p_max (floor), so use p_max
+        // - SHORT: engine divides size_delta_usd by p_min (ceil), so use p_min
+        //
+        // IMPORTANT: Add 1% buffer to size_delta_usd for LONG to handle price increases
+        // between cache read and order execution (race condition protection).
+        // This ensures floor(size_delta_usd / p_max) >= qty even if p_max increases.
+        let (price, _buffer): (Usd, Usd) = match side {
+            Side::Long => {
+                let p = price_max as Usd;
+                // Buffer: add 1% to compensate for price movement within tick
+                let buffer = p / 100;
+                (p + buffer, buffer)
+            }
+            Side::Short => (price_min as Usd, 0),
+        };
+
+        // qty * price = size in USD (micro-USD)
         let leverage = order.leverage.max(1) as Usd; // minimum 1x
         let size_delta_usd: Usd = (order.qty as Usd) * price;
         let collateral_delta: TokenAmount = size_delta_usd / leverage;
