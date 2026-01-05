@@ -85,7 +85,49 @@ error=pricing_error:PriceImpactLargerThanOrderSize {
 
 ---
 
-### 1.3 ❌ "position_empty_or_corrupted" после неудачного закрытия
+### 1.3 ❌ Расхождение цен Oracle/Execution (Race Condition)
+
+**Проблема:** При исполнении ордера цена oracle может измениться между моментом отправки ордера и его исполнением.
+
+**Симптомы:**
+- `size_tokens = 0` для LONG позиций
+- Ордер принимается, collateral списывается, но позиция не создаётся
+- Ошибки pricing при закрытии позиций
+
+**Причина:** В расчёте `base_size_delta_tokens`:
+
+```rust
+// services/pricing.rs
+let base_size_delta_tokens = match side {
+    Side::Long => size_delta_usd / p_max,   // floor division
+    Side::Short => size_delta_usd.div_ceil(p_min),
+};
+```
+
+Если между кешированием цены и исполнением цена выросла:
+- Клиент: `size_delta_usd = qty * cached_p_max`
+- Engine: `tokens = floor(size_delta_usd / actual_p_max)`
+- При `actual_p_max > cached_p_max`: `tokens = 0`
+
+**Пример:**
+```
+cached_p_max = $3150
+actual_p_max = $3160 (oracle обновился)
+size_delta_usd = 1 * 3150 = $3150
+tokens = floor(3150 / 3160) = 0 ❌
+```
+
+**Workaround (sim-engine):**
+Добавлен 3% буфер к `size_delta_usd` для LONG ордеров. Не решает проблему полностью.
+
+**Рекомендация для движка:**
+1. Передавать `expected_tokens` в ордере и валидировать
+2. Или добавить минимальный `slippage_tolerance` параметр
+3. Или использовать "snapshot price" из самого ордера вместо текущей oracle price
+
+---
+
+### 1.4 ❌ "position_empty_or_corrupted" после неудачного закрытия
 
 **Причина:** После ошибки `insufficient_collateral_for_negative_pnl` позиция остаётся в состоянии с `size_usd > 0`, но при следующей попытке закрыть возвращает эту ошибку.
 

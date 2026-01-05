@@ -171,6 +171,8 @@ pub struct ExchangeAgent {
     /// Maps symbol -> (market_id, collateral_asset)
     symbol_to_market: HashMap<String, (MarketId, AssetId)>,
     /// Maps symbol -> (index_decimals, collateral_decimals)
+    /// Reserved for future use (e.g., proper decimal handling in calculations)
+    #[allow(dead_code)]
     symbol_decimals: HashMap<String, (u32, u32)>,
 }
 
@@ -540,8 +542,9 @@ impl ExchangeAgent {
         let (price, _buffer): (Usd, Usd) = match side {
             Side::Long => {
                 let p = price_max as Usd;
-                // Buffer: add 1% to compensate for price movement within tick
-                let buffer = p / 100;
+                // Buffer: add 3% to compensate for price movement between oracle updates
+                // This ensures floor(size_delta_usd / p_max) >= qty even with volatility
+                let buffer = (p * 3) / 100;
                 (p + buffer, buffer)
             }
             Side::Short => (price_min as Usd, 0),

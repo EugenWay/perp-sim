@@ -11,6 +11,8 @@ use crate::messages::{
     OracleTickPayload, PositionLiquidatedPayload, Side, SimulatorApi,
 };
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
 /// Default starting balance for each trader (in micro-USD = $10,000)
 const DEFAULT_BALANCE: i128 = 10_000_000_000;
@@ -43,7 +45,8 @@ pub struct SmartTraderConfig {
     pub exchange_id: AgentId,
     pub symbol: String,
     pub strategy: TradingStrategy,
-    pub qty: u64,
+    pub qty_min: u64,
+    pub qty_max: u64,
     pub wake_interval_ms: u64,
 }
 
@@ -54,7 +57,8 @@ pub struct SmartTraderAgent {
     exchange_id: AgentId,
     symbol: String,
     strategy: TradingStrategy,
-    qty: u64,
+    qty_min: u64,
+    qty_max: u64,
     wake_interval_ns: u64,
 
     // Position tracking
@@ -85,7 +89,8 @@ impl SmartTraderAgent {
             exchange_id: config.exchange_id,
             symbol: config.symbol,
             strategy: config.strategy,
-            qty: config.qty,
+            qty_min: config.qty_min,
+            qty_max: config.qty_max.max(config.qty_min),
             wake_interval_ns: config.wake_interval_ms * 1_000_000,
             has_position: false,
             position_side: None,
@@ -99,6 +104,19 @@ impl SmartTraderAgent {
             liquidations: 0,
             total_pnl: 0,
         }
+    }
+
+    /// Generate random qty within configured range using timestamp as seed
+    fn random_qty(&self, now_ns: u64) -> u64 {
+        if self.qty_min == self.qty_max {
+            return self.qty_min;
+        }
+        // Simple hash-based randomization using timestamp + trader id
+        let mut hasher = DefaultHasher::new();
+        (now_ns, self.id, self.trades_opened).hash(&mut hasher);
+        let hash = hasher.finish();
+        let range = self.qty_max - self.qty_min + 1;
+        self.qty_min + (hash % range)
     }
 
     /// Check if trader has enough balance to open a position
@@ -116,7 +134,8 @@ impl SmartTraderAgent {
 
     fn open_position(&mut self, sim: &mut dyn SimulatorApi, side: Side, now_ns: u64) {
         let leverage = self.get_leverage();
-        let collateral_needed = self.qty as i128; // qty is collateral in micro-USD
+        let qty = self.random_qty(now_ns);
+        let collateral_needed = qty as i128; // qty is collateral in micro-USD
 
         // Check if we can afford it
         if !self.can_afford(collateral_needed) {
@@ -132,7 +151,7 @@ impl SmartTraderAgent {
         let payload = MessagePayload::MarketOrder(MarketOrderPayload {
             symbol: self.symbol.clone(),
             side,
-            qty: self.qty,
+            qty,
             leverage,
         });
 
@@ -142,11 +161,11 @@ impl SmartTraderAgent {
         };
 
         println!(
-            "[SmartTrader {}] OPEN {} {}x qty=${:.2} (balance: ${:.2})",
+            "[SmartTrader {}] OPEN {} {}x qty={} tokens (balance: ${:.2})",
             self.name, 
             side_str, 
             leverage, 
-            self.qty as f64 / 1_000_000.0,
+            qty,
             self.balance as f64 / 1_000_000.0
         );
 

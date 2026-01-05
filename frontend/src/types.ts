@@ -65,7 +65,7 @@ export interface OrderLog {
 export type SimEvent = OracleTick | PositionSnapshot | MarketSnapshot | OrderExecuted | OrderLog;
 
 export interface ApiCommand {
-  action: 'open' | 'close' | 'status';
+  action: 'open' | 'close' | 'status' | 'balance';
   symbol: string;
   side?: string;
   qty?: number;

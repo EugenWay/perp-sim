@@ -12,7 +12,11 @@ use tungstenite::Message;
 
 /// WebSocket Server handle
 pub struct WsServer {
+    /// Shutdown signal for graceful termination (reserved for future use)
+    #[allow(dead_code)]
     shutdown: Arc<AtomicBool>,
+    /// Thread handle for joining on shutdown (reserved for future use)
+    #[allow(dead_code)]
     thread_handle: Option<thread::JoinHandle<()>>,
 }
 

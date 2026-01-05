@@ -92,7 +92,11 @@ struct SmartTraderJsonConfig {
     #[serde(default = "default_leverage")]
     leverage: u32,
     #[serde(default = "default_qty")]
-    qty: u64,
+    qty: u64, // legacy: if qty_min/qty_max not set, use this for both
+    #[serde(default)]
+    qty_min: Option<u64>, // min tokens to trade (random range)
+    #[serde(default)]
+    qty_max: Option<u64>, // max tokens to trade (random range)
     #[serde(default = "default_hold_duration")]
     hold_duration_sec: u64, // for hodler
     #[serde(default = "default_lookback")]
@@ -349,12 +353,17 @@ fn run_with_config(config: SimConfig) {
             }
         };
 
+        // Support both legacy qty and new qty_min/qty_max
+        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty);
+        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty);
+
         let smart_config = SmartTraderConfig {
             name: smart_cfg.name.clone(),
             exchange_id: config.exchange.id,
             symbol: smart_cfg.symbol.clone(),
             strategy,
-            qty: smart_cfg.qty,
+            qty_min,
+            qty_max,
             wake_interval_ms: smart_cfg.wake_interval_ms,
         };
 
@@ -521,12 +530,17 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
             },
         };
 
+        // Support both legacy qty and new qty_min/qty_max
+        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty);
+        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty);
+
         let smart_config = SmartTraderConfig {
             name: smart_cfg.name.clone(),
             exchange_id: config.exchange.id,
             symbol: smart_cfg.symbol.clone(),
             strategy,
-            qty: smart_cfg.qty,
+            qty_min,
+            qty_max,
             wake_interval_ms: smart_cfg.wake_interval_ms,
         };
 

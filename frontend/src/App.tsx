@@ -27,6 +27,13 @@ interface LogEntry {
   type: 'trader' | 'exchange' | 'oracle' | 'error' | 'success';
 }
 
+interface Toast {
+  id: number;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+}
+
 // LocalStorage helpers
 function savePositionsToStorage(positions: PositionSnapshot[]) {
   try {
@@ -52,11 +59,11 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [prices, setPrices] = useState<Record<string, { min: number; max: number }>>({});
   const [markets, setMarkets] = useState<Record<string, MarketSnapshot>>({});
-  const [positions, setPositions] = useState<Record<string, PositionSnapshot>>({});
   const [humanPositions, setHumanPositions] = useState<PositionSnapshot[]>([]);
   const [humanBalance, setHumanBalance] = useState(INITIAL_BALANCE);
   const [traderLogs, setTraderLogs] = useState<LogEntry[]>([]);
   const [exchangeLogs, setExchangeLogs] = useState<LogEntry[]>([]);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
   // Trading form state
   const [selectedSymbol, setSelectedSymbol] = useState('ETH-USD');
@@ -69,12 +76,25 @@ function App() {
 
   const addTraderLog = (text: string, type: LogEntry['type'] = 'trader') => {
     const entry: LogEntry = { id: logIdRef.current++, ts: Date.now(), text, type };
-    setTraderLogs(prev => [entry, ...prev].slice(0, 100));
+    setTraderLogs(prev => [entry, ...prev].slice(0, 500));
   };
 
   const addExchangeLog = (text: string, type: LogEntry['type'] = 'exchange') => {
     const entry: LogEntry = { id: logIdRef.current++, ts: Date.now(), text, type };
-    setExchangeLogs(prev => [entry, ...prev].slice(0, 100));
+    setExchangeLogs(prev => [entry, ...prev].slice(0, 500));
+  };
+
+  const addToast = (type: Toast['type'], title: string, message: string) => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, type, title, message }]);
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  };
+
+  const removeToast = (id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   };
 
   const handleEvent = (event: SimEvent) => {
@@ -109,8 +129,6 @@ function App() {
 
       case 'PositionSnapshot': {
         const e = event as PositionSnapshot;
-        const key = `${e.account}-${e.symbol}-${e.side}`;
-        setPositions(prev => ({ ...prev, [key]: e }));
 
         if (e.account === HUMAN_AGENT_ID) {
           setHumanPositions(prev => {
@@ -139,6 +157,12 @@ function App() {
           addTraderLog(
             `${action} ${side} ${sizeStr} @ ${priceStr}`,
             'success'
+          );
+          // Show toast for Human executions
+          addToast(
+            'success',
+            `${action} ${side}`,
+            `${sizeStr} @ ${priceStr} (${e.leverage}x)`
           );
           // Update balance on close
           if (e.order_type === 'Decrease') {
@@ -202,6 +226,7 @@ function App() {
         if (!isMounted) return;
         setConnected(true);
         addExchangeLog('🟢 Connected to simulator', 'success');
+        addToast('success', '🟢 Connected', 'Connected to simulator');
         // Request balance after connection
         requestBalance(ws);
       };
@@ -210,6 +235,7 @@ function App() {
         if (!isMounted) return;
         setConnected(false);
         addExchangeLog('🔴 Disconnected', 'error');
+        addToast('warning', '🔴 Disconnected', 'Reconnecting in 2s...');
         // Reconnect after 2 seconds
         reconnectTimeout = setTimeout(connect, 2000);
       };
@@ -239,12 +265,19 @@ function App() {
               setHumanBalance(resp.data.available_balance || INITIAL_BALANCE);
               console.log('[API] Balance:', resp.data);
             } else {
+              // Show toast for Human responses
+              if (resp.success) {
+                addToast('success', '✅ Order Executed', resp.message);
+              } else {
+                addToast('error', '❌ Order Rejected', resp.message);
+              }
               addTraderLog(
                 resp.message,
                 resp.success ? 'success' : 'error'
               );
             }
           } else if (data.type === 'Error') {
+            addToast('error', '⚠️ Error', String(data.payload));
             addTraderLog(`Error: ${data.payload}`, 'error');
           }
         } catch (e) {
@@ -275,10 +308,12 @@ function App() {
 
   const openPosition = (side: 'long' | 'short') => {
     if (midPrice <= 0 || estimatedQty <= 0) {
+      addToast('error', '❌ Cannot Trade', 'Invalid price or quantity');
       addTraderLog('Cannot trade: invalid price or quantity', 'error');
       return;
     }
     if (estimatedCollateral > humanBalance) {
+      addToast('error', '❌ Insufficient Balance', `Need ${formatUsd(estimatedCollateral)}, have ${formatUsd(humanBalance)}`);
       addTraderLog('Insufficient balance for this trade', 'error');
       return;
     }
@@ -291,7 +326,11 @@ function App() {
       qty: qtyToSend,
       leverage,
     });
-    addTraderLog(`Sending ${side.toUpperCase()} order for ${qtyToSend} tokens...`, 'trader');
+    // Show actual qty in log (e.g., "4.7 → 5 tokens")
+    const qtyDisplay = estimatedQty.toFixed(2) !== qtyToSend.toString() 
+      ? `${estimatedQty.toFixed(2)} → ${qtyToSend}` 
+      : `${qtyToSend}`;
+    addTraderLog(`Order: ${selectedSymbol} ${side === 'long' ? 'Buy' : 'Sell'} qty=${qtyDisplay} lev=${leverage}x`, 'trader');
   };
 
   const closePosition = (symbol: string, side: Side) => {
@@ -320,11 +359,23 @@ function App() {
   const estimatedCollateral = humanBalance * (marginPercent / 100);
   const estimatedSize = estimatedCollateral * leverage;
   const estimatedQty = midPrice > 0 ? estimatedSize / midPrice : 0;
-  const maxMarginForBalance = humanBalance; // Max collateral we can use
   const canTrade = connected && midPrice > 0 && estimatedCollateral > 0 && estimatedCollateral <= humanBalance;
 
   return (
     <div className="app">
+      {/* Toast Notifications */}
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            <div className="toast-content">
+              <div className="toast-title">{toast.title}</div>
+              <div className="toast-message">{toast.message}</div>
+            </div>
+            <button className="toast-close" onClick={() => removeToast(toast.id)}>×</button>
+          </div>
+        ))}
+      </div>
+
       {/* Header with prices */}
       <header className="header">
         <div className="prices">

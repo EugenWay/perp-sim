@@ -10,6 +10,7 @@ pub struct TraderAgent {
     exchange_id: AgentId,
     symbol: String,
     wake_interval_ns: u64,
+    base_qty: u64,
     // State tracking
     has_long_position: bool,
     has_short_position: bool,
@@ -18,12 +19,17 @@ pub struct TraderAgent {
 
 impl TraderAgent {
     pub fn new(id: AgentId, name: String, exchange_id: AgentId, symbol: String) -> Self {
+        Self::with_qty(id, name, exchange_id, symbol, 1)
+    }
+
+    pub fn with_qty(id: AgentId, name: String, exchange_id: AgentId, symbol: String, base_qty: u64) -> Self {
         Self {
             id,
             name,
             exchange_id,
             symbol,
             wake_interval_ns: 2_000_000_000, // 2 seconds
+            base_qty: base_qty.max(1),
             has_long_position: false,
             has_short_position: false,
             trade_count: 0,
@@ -55,16 +61,20 @@ impl Agent for TraderAgent {
         // Simple pattern: open Long -> close Long -> open Short -> close Short -> repeat
         let action = self.trade_count % 4;
 
+        // Vary qty: base_qty +/- variation based on trade count
+        let variation = (self.trade_count % 3) as u64; // 0, 1, or 2
+        let qty = self.base_qty.saturating_add(variation).max(1);
+
         match action {
             1 => {
                 // Open Long
                 let payload = MessagePayload::MarketOrder(MarketOrderPayload {
                     symbol: self.symbol.clone(),
                     side: Side::Buy,
-                    qty: 1,
+                    qty,
                     leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN LONG 5x", self.name);
+                println!("[Trader {}] OPEN LONG 5x qty={}", self.name, qty);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_long_position = true;
             }
@@ -85,10 +95,10 @@ impl Agent for TraderAgent {
                 let payload = MessagePayload::MarketOrder(MarketOrderPayload {
                     symbol: self.symbol.clone(),
                     side: Side::Sell,
-                    qty: 1,
+                    qty,
                     leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN SHORT 5x", self.name);
+                println!("[Trader {}] OPEN SHORT 5x qty={}", self.name, qty);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_short_position = true;
             }
