@@ -9,7 +9,7 @@ pub mod trader_agent;
 pub trait Agent {
     fn id(&self) -> AgentId;
     fn name(&self) -> &str;
-
+    
     fn on_start(&mut self, _sim: &mut dyn SimulatorApi) {}
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {}
     fn on_wakeup(&mut self, _sim: &mut dyn SimulatorApi, _now_ns: u64) {}

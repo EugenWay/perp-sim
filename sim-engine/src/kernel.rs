@@ -115,7 +115,7 @@ impl Kernel {
                     println!("[Kernel] TICK {} (realtime)", step + 1);
                 }
             } else {
-                println!("\n[Kernel] === TICK {} at t={} ns ===", step + 1, self.time_ns);
+            println!("\n[Kernel] === TICK {} at t={} ns ===", step + 1, self.time_ns);
             }
 
             // Deliver all messages whose delivery time is <= now.

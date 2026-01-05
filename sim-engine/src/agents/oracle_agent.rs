@@ -69,10 +69,10 @@ impl Agent for OracleAgent {
         let verbose = self.block_number <= 3 || self.block_number % 10 == 0;
 
         if verbose {
-            println!(
+        println!(
                 "[Oracle {}] BLOCK #{} at t={} ns",
-                self.name, self.block_number, now_ns
-            );
+            self.name, self.block_number, now_ns
+        );
         }
 
         let symbol_refs: Vec<&str> = self.symbols.iter().map(|s| s.as_str()).collect();

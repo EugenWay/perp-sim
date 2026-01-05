@@ -37,6 +37,16 @@ impl ApiServer {
     pub fn start(port: u16, response_rx: Receiver<ApiResponse>) -> (Self, Sender<ApiCommand>, Receiver<ApiCommand>) {
         // Bounded channel to prevent memory leak if HumanAgent is slow
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<ApiCommand>(100);
+        let server = Self::start_with_channel(port, response_rx, cmd_tx.clone());
+        (server, cmd_tx, cmd_rx)
+    }
+
+    /// Start the API server with an existing command channel
+    pub fn start_with_channel(
+        port: u16,
+        response_rx: Receiver<ApiResponse>,
+        cmd_tx: Sender<ApiCommand>,
+    ) -> Self {
         let cmd_tx_clone = cmd_tx.clone();
         
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -99,14 +109,10 @@ impl ApiServer {
             }
         });
 
-        (
-            Self {
-                shutdown,
-                thread_handle: Some(thread_handle),
-            },
-            cmd_tx,
-            cmd_rx,
-        )
+        Self {
+            shutdown,
+            thread_handle: Some(thread_handle),
+        }
     }
 
     pub fn stop(&mut self) {

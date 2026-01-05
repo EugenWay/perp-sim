@@ -33,7 +33,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-
+    
     println!("=== PerpDEX Simulation ===");
     println!("[Main] Scenario: {}", args.scenario);
     if args.realtime {
@@ -43,7 +43,7 @@ fn main() {
         println!("[Main] Mode: Fast-forward");
     }
     println!();
-
+    
     if args.realtime {
         scenarios::simple_demo::run_realtime(&args.scenario, args.tick_ms, args.port);
     } else {
