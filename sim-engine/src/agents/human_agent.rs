@@ -9,6 +9,9 @@ use crate::messages::{
     PositionLiquidatedPayload, Side, SimulatorApi,
 };
 
+/// Initial balance for Human trader (in micro-USD = $10,000)
+const INITIAL_BALANCE: i128 = 10_000_000_000;
+
 pub struct HumanAgent {
     id: AgentId,
     name: String,
@@ -17,6 +20,10 @@ pub struct HumanAgent {
     response_tx: Sender<ApiResponse>,
     wake_interval_ns: u64,
     open_positions: std::collections::HashMap<String, Side>,
+    /// Total collateral locked in open positions
+    collateral_used: i128,
+    /// Initial balance
+    initial_balance: i128,
 }
 
 impl HumanAgent {
@@ -36,7 +43,14 @@ impl HumanAgent {
             response_tx,
             wake_interval_ns: wake_interval_ms * 1_000_000,
             open_positions: std::collections::HashMap::new(),
+            collateral_used: 0,
+            initial_balance: INITIAL_BALANCE,
         }
+    }
+
+    /// Get available balance (initial - collateral used)
+    pub fn available_balance(&self) -> i128 {
+        self.initial_balance - self.collateral_used
     }
 
     fn process_commands(&mut self, sim: &mut dyn SimulatorApi) {
@@ -47,6 +61,7 @@ impl HumanAgent {
                 "open" | "order" => self.handle_open(sim, &cmd),
                 "close" => self.handle_close(sim, &cmd),
                 "status" => self.handle_status(),
+                "balance" => self.handle_balance(),
                 _ => ApiResponse {
                     success: false,
                     message: format!("Unknown action: {}", cmd.action),
@@ -136,6 +151,19 @@ impl HumanAgent {
             success: true,
             message: format!("{} positions", positions.len()),
             data: Some(serde_json::json!({"agent": self.name, "positions": positions})),
+        }
+    }
+
+    fn handle_balance(&self) -> ApiResponse {
+        let available = self.available_balance();
+        ApiResponse {
+            success: true,
+            message: format!("Balance: ${:.2}", available as f64 / 1_000_000.0),
+            data: Some(serde_json::json!({
+                "initial_balance": self.initial_balance,
+                "collateral_used": self.collateral_used,
+                "available_balance": available,
+            })),
         }
     }
 }
