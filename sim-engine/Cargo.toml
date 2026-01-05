@@ -17,3 +17,4 @@ tiny_http = "0.12"
 clap = { version = "4.4", features = ["derive"] }
 # Crossbeam channels for thread communication
 crossbeam-channel = "0.5"
+tungstenite = "0.28.0"
