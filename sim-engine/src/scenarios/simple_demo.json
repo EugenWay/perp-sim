@@ -10,7 +10,9 @@
         "id": 0,
         "symbol": "ETH-USD",
         "index_token": "ETH",
+        "index_decimals": 18,
         "collateral_token": "USDT",
+        "collateral_decimals": 6,
         "initial_liquidity": {
           "collateral_amount": 10000000000000,
           "index_amount": 5000000000000,

@@ -5,7 +5,7 @@ use crate::agents::{
     smart_trader_agent::{SmartTraderAgent, SmartTraderConfig, TradingStrategy},
     trader_agent::TraderAgent,
 };
-use crate::api::{ApiServer, CachedPriceProvider, PythProvider};
+use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
 use crate::messages::Side;
 use crate::sim_engine::SimEngine;
@@ -38,8 +38,20 @@ struct MarketJsonConfig {
     id: u32,
     symbol: String,
     index_token: String,
+    #[serde(default = "default_index_decimals")]
+    index_decimals: u32,
     collateral_token: String,
+    #[serde(default = "default_collateral_decimals")]
+    collateral_decimals: u32,
     initial_liquidity: LiquidityConfig,
+}
+
+fn default_index_decimals() -> u32 {
+    18 // ETH default
+}
+
+fn default_collateral_decimals() -> u32 {
+    6 // USDT default
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +157,7 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&content)?)
     }
-}
+    }
 
 impl Default for SimConfig {
     fn default() -> Self {
@@ -160,7 +172,9 @@ impl Default for SimConfig {
                     id: 0,
                     symbol: "ETH-USD".to_string(),
                     index_token: "ETH".to_string(),
+                    index_decimals: 18,
                     collateral_token: "USDT".to_string(),
+                    collateral_decimals: 6,
                     initial_liquidity: LiquidityConfig {
                         collateral_amount: 1_000_000_000_000,
                         index_amount: 500_000_000_000,
@@ -259,6 +273,8 @@ fn run_with_config(config: SimConfig) {
             collateral_amount: m.initial_liquidity.collateral_amount,
             index_amount: m.initial_liquidity.index_amount,
             liquidity_usd: m.initial_liquidity.liquidity_usd,
+            index_decimals: m.index_decimals,
+            collateral_decimals: m.collateral_decimals,
         })
         .collect();
 
@@ -386,9 +402,47 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     let _ = fs::create_dir_all(&config.logs_dir);
 
-    // Start API server
+    // Start API server (HTTP)
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
-    let (_api_server, _cmd_tx, cmd_rx) = ApiServer::start(api_port, response_rx);
+    let (response_tx_ws, response_rx_ws) = crossbeam_channel::unbounded();
+
+    // Use a shared channel for commands from both HTTP and WS
+    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+    
+    // Start HTTP API
+    let _api_server = crate::api::ApiServer::start_with_channel(api_port, response_rx, cmd_tx.clone());
+
+    // Start WebSocket API (on port + 1)
+    let ws_port = api_port + 1;
+    let (event_tx, event_rx) = crossbeam_channel::unbounded();
+    let _ws_server = crate::api::WsServer::start(ws_port, cmd_tx, event_rx, response_rx_ws);
+
+    // Subscribe WS to all events
+    {
+        let event_tx = event_tx.clone();
+        let listener = move |ev: &SimEvent| {
+            let _ = event_tx.send(ev.clone());
+        };
+        engine
+            .kernel
+            .event_bus_mut()
+            .subscribe(Box::new(ClosureListener { closure: listener }));
+    }
+
+    // We need to split responses to both HTTP and WS?
+    // HumanAgent has only one response_tx.
+    // Solution: Create a "Splitter" channel?
+    // Or simpler: HumanAgent sends to a channel, and we have a thread that forwards to both HTTP and WS response channels.
+    
+    let (human_response_tx, human_response_rx) = crossbeam_channel::unbounded::<crate::api::ApiResponse>();
+    
+    // Response forwarder thread
+    std::thread::spawn(move || {
+        while let Ok(resp) = human_response_rx.recv() {
+            let _ = response_tx.send(resp.clone());
+            let _ = response_tx_ws.send(resp);
+        }
+    });
 
     // Create markets
     let markets: Vec<MarketConfig> = config
@@ -403,6 +457,8 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
             collateral_amount: m.initial_liquidity.collateral_amount,
             index_amount: m.initial_liquidity.index_amount,
             liquidity_usd: m.initial_liquidity.liquidity_usd,
+            index_decimals: m.index_decimals,
+            collateral_decimals: m.collateral_decimals,
         })
         .collect();
 
@@ -485,7 +541,7 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         "HumanTrader".to_string(),
         config.exchange.id,
         cmd_rx,
-        response_tx,
+        human_response_tx,
         tick_ms,
     )));
 
@@ -499,9 +555,8 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
     println!();
     println!("=== API Endpoints ===");
     println!("  POST http://localhost:{}/order", api_port);
-    println!("       {{\"action\":\"open\", \"symbol\":\"ETH-USD\", \"side\":\"long\", \"qty\":1, \"leverage\":5}}");
-    println!("  POST http://localhost:{}/close  {{\"symbol\":\"ETH-USD\"}}", api_port);
-    println!("  GET  http://localhost:{}/status", api_port);
+    println!("  WS   ws://localhost:{}", ws_port);
+    println!("       {{\"action\":\"open\", \"symbol\":\"ETH-USD\", ...}}");
     println!();
     println!("Press Ctrl+C to stop");
     println!();
