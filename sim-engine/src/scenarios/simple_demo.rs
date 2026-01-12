@@ -1,12 +1,16 @@
 use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     human_agent::HumanAgent,
+    liquidation_agent::LiquidationAgent,
     oracle_agent::OracleAgent,
     smart_trader_agent::{SmartTraderAgent, SmartTraderConfig, TradingStrategy},
     trader_agent::TraderAgent,
 };
 use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
+use crate::logging::{
+    CsvExecutionLogger, CsvLiquidationLogger, CsvMarketLogger, CsvOracleLogger, CsvPositionLogger,
+};
 use crate::messages::Side;
 use crate::sim_engine::SimEngine;
 use crossbeam_channel;
@@ -136,6 +140,18 @@ fn default_smart_wake_interval() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct LiquidationAgentConfig {
+    id: u32,
+    name: String,
+    #[serde(default = "default_liquidation_wake_interval")]
+    wake_interval_ms: u64,
+}
+
+fn default_liquidation_wake_interval() -> u64 {
+    200 // 200ms default scan interval
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
     scenario_name: String,
     duration_sec: u64,
@@ -146,6 +162,8 @@ pub struct SimConfig {
     traders: Vec<TraderConfig>,
     #[serde(default)]
     smart_traders: Vec<SmartTraderJsonConfig>,
+    #[serde(default)]
+    liquidation_agent: Option<LiquidationAgentConfig>,
 }
 
 fn default_wake_interval() -> u64 {
@@ -201,6 +219,7 @@ impl Default for SimConfig {
                 wake_interval_ms: 2000,
             }],
             smart_traders: vec![],
+            liquidation_agent: None,
         }
     }
 }
@@ -218,8 +237,26 @@ fn run_with_config(config: SimConfig) {
 
     let mut engine = SimEngine::with_default_latency();
 
+    // Register CSV loggers for all event types
+    let _ = fs::create_dir_all(&config.logs_dir);
+    
+    if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvExecutionLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvPositionLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvMarketLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvLiquidationLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+
     {
-        let _ = fs::create_dir_all(&config.logs_dir);
         let orders_path = format!("{}/orders.csv", config.logs_dir);
         let file = File::create(&orders_path).expect("cannot create orders.csv");
         let writer = RefCell::new(BufWriter::new(file));
@@ -372,6 +409,17 @@ fn run_with_config(config: SimConfig) {
             .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
     }
 
+    // Add liquidation agent if configured
+    if let Some(liq_cfg) = &config.liquidation_agent {
+        let wake_interval_ns = liq_cfg.wake_interval_ms * 1_000_000;
+        engine.kernel.add_agent(Box::new(LiquidationAgent::new(
+            liq_cfg.id,
+            liq_cfg.name.clone(),
+            config.exchange.id,
+            wake_interval_ns,
+        )));
+    }
+
     println!("[Scenario] starting {}", config.scenario_name);
     engine.run(max_ticks);
     println!("[Scenario] finished {}", config.scenario_name);
@@ -409,7 +457,24 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     let mut engine = SimEngine::with_realtime(tick_ms);
 
+    // Register CSV loggers for all event types
     let _ = fs::create_dir_all(&config.logs_dir);
+    
+    if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvExecutionLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvPositionLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvMarketLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
+    if let Ok(logger) = CsvLiquidationLogger::new(&config.logs_dir) {
+        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    }
 
     // Start API server (HTTP)
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
@@ -549,6 +614,17 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
             .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
     }
 
+    // Add liquidation agent if configured
+    if let Some(liq_cfg) = &config.liquidation_agent {
+        let wake_interval_ns = liq_cfg.wake_interval_ms * 1_000_000;
+        engine.kernel.add_agent(Box::new(LiquidationAgent::new(
+            liq_cfg.id,
+            liq_cfg.name.clone(),
+            config.exchange.id,
+            wake_interval_ns,
+        )));
+    }
+
     // Add HumanAgent (id=100, reserved)
     engine.kernel.add_agent(Box::new(HumanAgent::new(
         100,
@@ -562,9 +638,10 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
     println!();
     println!("=== REALTIME MODE ===");
     println!(
-        "Agents: {} traders + {} smart_traders + HumanAgent",
+        "Agents: {} traders + {} smart_traders + HumanAgent{}",
         config.traders.len(),
-        config.smart_traders.len()
+        config.smart_traders.len(),
+        if config.liquidation_agent.is_some() { " + LiquidationAgent" } else { "" }
     );
     println!();
     println!("=== API Endpoints ===");

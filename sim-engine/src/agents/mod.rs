@@ -2,6 +2,7 @@ use crate::messages::{AgentId, Message, SimulatorApi};
 
 pub mod exchange_agent;
 pub mod human_agent;
+pub mod liquidation_agent;
 pub mod oracle_agent;
 pub mod smart_trader_agent;
 pub mod trader_agent;

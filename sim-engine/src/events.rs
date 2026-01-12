@@ -66,6 +66,18 @@ pub enum SimEvent {
         // funding_rate: f64,
         // borrowing_rate: f64,
     },
+
+    /// Position was liquidated (explicit event for frontend/analytics)
+    PositionLiquidated {
+        ts: u64,
+        account: AgentId,
+        symbol: String,
+        side: Side,
+        size_usd: u64,
+        collateral_lost: u64,  // Collateral that was seized/lost
+        pnl: i64,              // Final PnL (usually negative)
+        liquidation_price: u64, // Price at which liquidated
+    },
 }
 
 pub trait EventListener {

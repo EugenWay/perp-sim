@@ -239,3 +239,49 @@ impl EventListener for CsvMarketLogger {
         }
     }
 }
+
+/// Liquidation logger: logs/liquidations.csv
+pub struct CsvLiquidationLogger {
+    file: std::fs::File,
+}
+
+impl CsvLiquidationLogger {
+    pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
+        let header = "ts,account,symbol,side,size_usd,collateral_lost,pnl,liquidation_price";
+        let file = open_csv_with_header(dir.as_ref(), "liquidations.csv", header)?;
+        Ok(Self { file })
+    }
+}
+
+impl EventListener for CsvLiquidationLogger {
+    fn on_event(&mut self, event: &SimEvent) {
+        if let SimEvent::PositionLiquidated {
+            ts,
+            account,
+            symbol,
+            side,
+            size_usd,
+            collateral_lost,
+            pnl,
+            liquidation_price,
+        } = event
+        {
+            let side_str = format!("{:?}", side);
+            let line = format!(
+                "{},{},{},{},{},{},{},{}\n",
+                ts,
+                account,
+                symbol,
+                side_str,
+                size_usd,
+                collateral_lost,
+                pnl,
+                liquidation_price,
+            );
+
+            if let Err(e) = self.file.write_all(line.as_bytes()) {
+                eprintln!("[CsvLiquidationLogger] write error: {e}");
+            }
+        }
+    }
+}

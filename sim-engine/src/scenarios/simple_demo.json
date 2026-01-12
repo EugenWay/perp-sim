@@ -97,5 +97,10 @@
       "threshold_pct": 0.2,
       "wake_interval_ms": 5000
     }
-  ]
+  ],
+  "liquidation_agent": {
+    "id": 50,
+    "name": "LiquidationBot",
+    "wake_interval_ms": 200
+  }
 }

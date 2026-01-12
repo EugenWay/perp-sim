@@ -393,6 +393,217 @@ impl ExchangeAgent {
         sim.send(self.id, agent_id, MessageType::PositionLiquidated, payload);
     }
 
+    /// Execute liquidation for a position
+    /// This actually closes the position using the perp-futures engine
+    fn execute_liquidation(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        agent_id: AgentId,
+        symbol: String,
+        side: Side,
+        now_ns: u64,
+    ) -> Result<(), String> {
+        let now = (now_ns / 1_000_000_000) as Timestamp;
+
+        // Get account for this agent
+        let account = match self.accounts.get(&agent_id) {
+            Some(acc) => *acc,
+            None => return Err(format!("Agent {} has no account", agent_id)),
+        };
+
+        // Get market info
+        let (market_id, collateral_asset) = match self.symbol_to_market.get(&symbol) {
+            Some((mid, cid)) => (*mid, *cid),
+            None => return Err(format!("Unknown symbol: {}", symbol)),
+        };
+
+        // Get position key
+        let key = PositionKey {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+        };
+
+        // Get position to liquidate
+        let position = match self.executor.state.positions.get(&key) {
+            Some(pos) => pos.clone(),
+            None => return Err(format!("No position found for liquidation")),
+        };
+
+        // Calculate current PnL
+        let current_price = self.last_prices.get(&symbol).copied().unwrap_or(0);
+        let pnl = calculate_pnl(position.size_usd, position.size_tokens, current_price, side);
+
+        println!(
+            "[Exchange {}] 🔥 EXECUTING LIQUIDATION: {} {:?} agent={} size=${:.2} pnl=${:.2} collateral=${:.2}",
+            self.name,
+            symbol,
+            side,
+            agent_id,
+            position.size_usd as f64 / 1_000_000.0,
+            pnl as f64 / 1_000_000.0,
+            position.collateral_amount as f64 / 1_000_000.0,
+        );
+
+        // Create liquidation order using OrderType::Liquidation
+        let perp_order = Order {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+            order_type: OrderType::Liquidation,
+            collateral_delta_tokens: 0,
+            size_delta_usd: position.size_usd, // Close full position
+            withdraw_collateral_amount: 0,     // Let executor calculate final payout
+            target_leverage_x: 0,
+            created_at: now,
+            valid_from: now,
+            valid_until: now + 3600,
+        };
+
+        let order_id = self.executor.submit_order(perp_order);
+
+        match self.executor.execute_order(now, order_id) {
+            Ok(()) => {
+                println!(
+                    "[Exchange {}] ✅ LIQUIDATION EXECUTED: {} agent={} side={:?}",
+                    self.name, symbol, agent_id, side
+                );
+
+                // Get execution price from oracle
+                let execution_price = current_price;
+
+                // Emit liquidation execution event
+                sim.emit_event(SimEvent::OrderExecuted {
+                    ts: now_ns,
+                    account: agent_id,
+                    symbol: symbol.clone(),
+                    side: Self::convert_side_back(side),
+                    size_usd: position.size_usd as u64,
+                    collateral: position.collateral_amount as u64,
+                    execution_price,
+                    leverage: 0,
+                    order_type: "Liquidation".to_string(),
+                });
+
+                // Emit specific liquidation event for detailed analytics
+                sim.emit_event(SimEvent::PositionLiquidated {
+                    ts: now_ns,
+                    account: agent_id,
+                    symbol: symbol.clone(),
+                    side: Self::convert_side_back(side),
+                    size_usd: position.size_usd as u64,
+                    collateral_lost: position.collateral_amount as u64,
+                    pnl: pnl,
+                    liquidation_price: current_price,
+                });
+
+                // Send notification to trader
+                self.notify_liquidation(
+                    sim,
+                    agent_id,
+                    symbol,
+                    side,
+                    position.size_usd,
+                    pnl,
+                    position.collateral_amount,
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                let err_msg = format!("Liquidation execution failed: {:?}", e);
+                println!("[Exchange {}] ❌ {}", self.name, err_msg);
+                Err(err_msg)
+            }
+        }
+    }
+
+    /// Scan for liquidatable positions and execute liquidations
+    fn process_liquidation_scan(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+        // Get list of positions to liquidate
+        let to_liquidate = self.get_liquidatable_positions();
+
+        if to_liquidate.is_empty() {
+            return;
+        }
+
+        println!(
+            "[Exchange {}] 🔍 Found {} positions to liquidate",
+            self.name,
+            to_liquidate.len()
+        );
+
+        // Execute liquidation for each underwater position
+        for (agent_id, symbol, side, size_usd, _pnl, _collateral) in to_liquidate {
+            match self.execute_liquidation(sim, agent_id, symbol.clone(), side, now_ns) {
+                Ok(()) => {
+                    println!(
+                        "[Exchange {}] Liquidated: agent={} {} {:?} size=${:.2}",
+                        self.name,
+                        agent_id,
+                        symbol,
+                        side,
+                        size_usd as f64 / 1_000_000.0
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[Exchange {}] Failed to liquidate agent={} {} {:?}: {}",
+                        self.name, agent_id, symbol, side, e
+                    );
+                }
+            }
+        }
+    }
+
+    /// Get list of liquidatable positions without emitting snapshots
+    /// Returns list of (agent_id, symbol, side, size_usd, pnl, collateral)
+    fn get_liquidatable_positions(&self) -> Vec<(AgentId, String, Side, i128, i64, i128)> {
+        // Reverse lookup: account_id -> agent_id
+        let account_to_agent: HashMap<AccountId, AgentId> =
+            self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
+
+        let mut to_liquidate = Vec::new();
+
+        // Check all positions
+        for (key, position) in self.executor.state.positions.iter() {
+            // Find symbol for this market
+            let symbol = self
+                .symbol_to_market
+                .iter()
+                .find(|(_, (mid, _))| *mid == key.market_id)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_else(|| format!("UNKNOWN-{:?}", key.market_id));
+
+            let current_price = self.last_prices.get(&symbol).copied().unwrap_or(0);
+
+            // Calculate PnL
+            let pnl = calculate_pnl(position.size_usd, position.size_tokens, current_price, key.side);
+
+            // Check if liquidatable
+            let liquidatable = is_liquidatable_by_margin(position.collateral_amount, pnl, position.size_usd);
+
+            // Get agent_id from account
+            let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
+
+            // Collect liquidatable positions (excluding exchange itself)
+            if liquidatable && agent_id != 0 {
+                to_liquidate.push((
+                    agent_id,
+                    symbol,
+                    key.side,
+                    position.size_usd,
+                    pnl,
+                    position.collateral_amount,
+                ));
+            }
+        }
+
+        to_liquidate
+    }
+
     fn process_close_order(
         &mut self,
         sim: &mut dyn SimulatorApi,
@@ -702,6 +913,12 @@ impl Agent for ExchangeAgent {
                     "[Exchange {}] LIMIT_ORDER from {} (not implemented)",
                     self.name, msg.from
                 );
+            }
+
+            MessageType::LiquidationScan => {
+                // Liquidation agent requested a scan
+                let now_ns = sim.now_ns();
+                self.process_liquidation_scan(sim, now_ns);
             }
 
             _ => {}
