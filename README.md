@@ -168,6 +168,8 @@ Scenarios are JSON files in `sim-engine/src/scenarios/`.
 
 ## Units of Measurement
 
+### External (API, Logs, Frontend)
+
 | Value               | Unit        | Scale    | Example                  |
 | ------------------- | ----------- | -------- | ------------------------ |
 | **Prices**          | micro-USD   | 1e-6 USD | `2939000000` = $2,939.00 |
@@ -176,14 +178,46 @@ Scenarios are JSON files in `sim-engine/src/scenarios/`.
 | **Timestamps**      | nanoseconds | 1e-9 sec | Unix epoch in ns         |
 | **Leverage**        | integer     | 1x       | `5` = 5x leverage        |
 
+### Internal (perp-futures engine)
+
+| Value               | Unit            | Scale      | Example                          |
+| ------------------- | --------------- | ---------- | -------------------------------- |
+| **Prices**          | USD per atom    | 1e30       | ETH: `3000 * 10^12` per wei      |
+| **Size/OI**         | USD             | 1e30       | `585 * 10^30` = $585             |
+| **Collateral**      | atoms           | 10^decimals| USDC: `585000000` (6 decimals)   |
+| **Liquidity**       | USD             | 1e30       | `20_000_000 * 10^30` = $20M      |
+
+### Price Normalization
+
+Conversion between external micro-USD and internal USD(1e30) per atom:
+
+```rust
+// External → Internal (at SimOracle boundary)
+price_per_atom = price_micro_usd * 10^(24 - token_decimals)
+
+// Examples:
+// ETH ($3000, 18 decimals):  3_000_000_000 * 10^6  = 3000 * 10^12 per wei
+// BTC ($100k, 8 decimals):   100_000_000_000 * 10^16 = 100000 * 10^22 per satoshi
+// USDC ($1, 6 decimals):     1_000_000 * 10^18 = 10^24 per atom
+
+// Internal → External (for display)
+price_micro_usd = price_per_atom / 10^(24 - token_decimals)
+```
+
 ### Converting Values
 
 ```python
-# micro-USD to USD
+# External: micro-USD to USD
 usd = micro_usd / 1_000_000
 
 # Example: 2939000000 -> $2,939.00
 price = 2939000000 / 1_000_000  # = 2939.0
+
+# Internal: USD(1e30) to USD
+usd = usd_1e30 / 1e30
+
+# Example: 585 * 10^30 -> $585.00
+size = (585 * 10**30) / 10**30  # = 585.0
 ```
 
 ## Output Logs
@@ -246,13 +280,16 @@ ts,account,symbol,side,size_usd,size_tokens,collateral,entry_price,current_price
               └─────────────────┘
 ```
 
-## Known Issues (perp-futures engine)
+## Engine Integration
 
-See `PERP_FUTURES_ISSUES.md` for details:
+The simulator uses `perp-futures` engine API for:
 
-- Ceiling rounding causes immediate paper loss on Short positions
-- No `get_liquidation_price()` API
-- `insufficient_collateral_for_negative_pnl` on close
+- ✅ **Liquidation checks**: `executor.is_liquidatable_by_margin()`
+- ✅ **Liquidation price**: `executor.calculate_liquidation_price()`
+- ✅ **Order execution**: All orders executed through `executor.execute_order()`
+- ✅ **PnL calculation**: Engine handles PnL with fees, funding, borrowing, price impact
+
+See `PERP_FUTURES_ISSUES.md` for known engine limitations.
 
 ## License
 
