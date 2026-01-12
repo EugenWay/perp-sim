@@ -10,7 +10,7 @@ use tiny_http::{Method, Response, Server};
 /// Command sent from HTTP API to HumanAgent
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiCommand {
-    pub action: String,      // "open", "close", "status"
+    pub action: String,      // "open", "close", "status", "liquidations", "positions"
     pub symbol: String,
     pub side: Option<String>, // "long" or "short"
     pub qty: Option<u64>,
