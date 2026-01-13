@@ -323,7 +323,12 @@
       "qty_max": 5.0,
       "hold_duration_sec": 240,
       "wake_interval_ms": 15000
-    }
+    },
+
+    {"id": 60, "name": "MegaW1_L", "symbol": "ETH-USD", "strategy": "hodler", "side": "long", "leverage": 2, "qty_min": 14.0, "qty_max": 18.0, "hold_duration_sec": 120, "wake_interval_ms": 30000},
+    {"id": 61, "name": "MegaW1_S", "symbol": "ETH-USD", "strategy": "hodler", "side": "short", "leverage": 2, "qty_min": 14.0, "qty_max": 18.0, "hold_duration_sec": 120, "wake_interval_ms": 30000},
+    {"id": 62, "name": "MegaW2_L", "symbol": "ETH-USD", "strategy": "hodler", "side": "long", "leverage": 2, "qty_min": 12.0, "qty_max": 16.0, "hold_duration_sec": 150, "wake_interval_ms": 35000},
+    {"id": 63, "name": "MegaW2_S", "symbol": "ETH-USD", "strategy": "hodler", "side": "short", "leverage": 2, "qty_min": 12.0, "qty_max": 16.0, "hold_duration_sec": 150, "wake_interval_ms": 35000}
   ],
   "liquidation_agent": {
     "id": 70,

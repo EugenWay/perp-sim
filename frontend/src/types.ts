@@ -105,6 +105,9 @@ export const AGENT_NAMES: Record<number, string> = {
   // Whales (rare, big)
   50: 'Whale1_L', 51: 'Whale1_S',
   52: 'Whale2_L', 53: 'Whale2_S',
+  // Mega Whales (~$50K positions)
+  60: 'MegaW1_L', 61: 'MegaW1_S',
+  62: 'MegaW2_L', 63: 'MegaW2_S',
   // System
   70: 'LiqBot',
   100: 'Human',
