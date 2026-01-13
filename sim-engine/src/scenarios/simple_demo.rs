@@ -8,9 +8,7 @@ use crate::agents::{
 };
 use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
-use crate::logging::{
-    CsvExecutionLogger, CsvLiquidationLogger, CsvMarketLogger, CsvOracleLogger, CsvPositionLogger,
-};
+use crate::logging::{CsvExecutionLogger, CsvLiquidationLogger, CsvMarketLogger, CsvOracleLogger, CsvPositionLogger};
 use crate::messages::Side;
 use crate::sim_engine::SimEngine;
 use crossbeam_channel;
@@ -98,9 +96,9 @@ struct SmartTraderJsonConfig {
     #[serde(default = "default_qty")]
     qty: u64, // legacy: if qty_min/qty_max not set, use this for both
     #[serde(default)]
-    qty_min: Option<u64>, // min tokens to trade (random range)
+    qty_min: Option<f64>, // min tokens to trade (random range)
     #[serde(default)]
-    qty_max: Option<u64>, // max tokens to trade (random range)
+    qty_max: Option<f64>, // max tokens to trade (random range)
     #[serde(default = "default_hold_duration")]
     hold_duration_sec: u64, // for hodler
     #[serde(default = "default_lookback")]
@@ -179,7 +177,7 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&content)?)
     }
-    }
+}
 
 impl Default for SimConfig {
     fn default() -> Self {
@@ -239,7 +237,7 @@ fn run_with_config(config: SimConfig) {
 
     // Register CSV loggers for all event types
     let _ = fs::create_dir_all(&config.logs_dir);
-    
+
     if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
         engine.kernel.event_bus_mut().subscribe(Box::new(logger));
     }
@@ -391,8 +389,8 @@ fn run_with_config(config: SimConfig) {
         };
 
         // Support both legacy qty and new qty_min/qty_max
-        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty);
-        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty);
+        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty as f64);
+        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty as f64);
 
         let smart_config = SmartTraderConfig {
             name: smart_cfg.name.clone(),
@@ -429,26 +427,58 @@ pub fn run() {
     run_scenario("simple_demo");
 }
 
-pub fn run_scenario(scenario_name: &str) {
-    let config_path = format!("sim-engine/src/scenarios/{}.json", scenario_name);
+fn find_config_file(scenario_name: &str) -> Option<String> {
+    // Try multiple possible locations
+    let candidates = [
+        format!("sim-engine/src/scenarios/{}.json", scenario_name),
+        format!("src/scenarios/{}.json", scenario_name),
+        format!("scenarios/{}.json", scenario_name),
+        format!("{}.json", scenario_name),
+    ];
 
-    let config = SimConfig::from_file(&config_path).unwrap_or_else(|e| {
-        eprintln!("[Scenario] Failed to load {}: {}", config_path, e);
-        eprintln!("[Scenario] Using default configuration");
-        SimConfig::default()
-    });
+    for path in &candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.clone());
+        }
+    }
+    None
+}
+
+pub fn run_scenario(scenario_name: &str) {
+    let config = match find_config_file(scenario_name) {
+        Some(path) => {
+            println!("[Scenario] Found config: {}", path);
+            SimConfig::from_file(&path).unwrap_or_else(|e| {
+                eprintln!("[Scenario] Failed to parse {}: {}", path, e);
+                eprintln!("[Scenario] Using default configuration");
+                SimConfig::default()
+            })
+        }
+        None => {
+            eprintln!("[Scenario] Config file not found for: {}", scenario_name);
+            eprintln!("[Scenario] Using default configuration");
+            SimConfig::default()
+        }
+    };
 
     run_with_config(config);
 }
 
 /// Run simulation in realtime mode with HTTP API for HumanAgent
 pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
-    let config_path = format!("sim-engine/src/scenarios/{}.json", scenario_name);
-
-    let config = SimConfig::from_file(&config_path).unwrap_or_else(|e| {
-        eprintln!("[Scenario] Failed to load {}: {}", config_path, e);
-        SimConfig::default()
-    });
+    let config = match find_config_file(scenario_name) {
+        Some(path) => {
+            println!("[Scenario] Found config: {}", path);
+            SimConfig::from_file(&path).unwrap_or_else(|e| {
+                eprintln!("[Scenario] Failed to parse {}: {}", path, e);
+                SimConfig::default()
+            })
+        }
+        None => {
+            eprintln!("[Scenario] Config file not found for: {}", scenario_name);
+            SimConfig::default()
+        }
+    };
 
     println!("[Scenario] Loading: {} (REALTIME)", config.scenario_name);
     println!("[Scenario] Tick: {}ms, API port: {}", tick_ms, api_port);
@@ -459,7 +489,7 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     // Register CSV loggers for all event types
     let _ = fs::create_dir_all(&config.logs_dir);
-    
+
     if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
         engine.kernel.event_bus_mut().subscribe(Box::new(logger));
     }
@@ -482,7 +512,7 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     // Use a shared channel for commands from both HTTP and WS
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-    
+
     // Start HTTP API
     let _api_server = crate::api::ApiServer::start_with_channel(api_port, response_rx, cmd_tx.clone());
 
@@ -507,9 +537,9 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
     // HumanAgent has only one response_tx.
     // Solution: Create a "Splitter" channel?
     // Or simpler: HumanAgent sends to a channel, and we have a thread that forwards to both HTTP and WS response channels.
-    
+
     let (human_response_tx, human_response_rx) = crossbeam_channel::unbounded::<crate::api::ApiResponse>();
-    
+
     // Response forwarder thread
     std::thread::spawn(move || {
         while let Ok(resp) = human_response_rx.recv() {
@@ -596,8 +626,8 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         };
 
         // Support both legacy qty and new qty_min/qty_max
-        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty);
-        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty);
+        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty as f64);
+        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty as f64);
 
         let smart_config = SmartTraderConfig {
             name: smart_cfg.name.clone(),
@@ -641,7 +671,11 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         "Agents: {} traders + {} smart_traders + HumanAgent{}",
         config.traders.len(),
         config.smart_traders.len(),
-        if config.liquidation_agent.is_some() { " + LiquidationAgent" } else { "" }
+        if config.liquidation_agent.is_some() {
+            " + LiquidationAgent"
+        } else {
+            ""
+        }
     );
     println!();
     println!("=== API Endpoints ===");

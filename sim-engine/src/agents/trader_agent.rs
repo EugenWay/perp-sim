@@ -63,7 +63,7 @@ impl Agent for TraderAgent {
 
         // Vary qty: base_qty +/- variation based on trade count
         let variation = (self.trade_count % 3) as u64; // 0, 1, or 2
-        let qty = self.base_qty.saturating_add(variation).max(1);
+        let qty = (self.base_qty.saturating_add(variation).max(1)) as f64;
 
         match action {
             1 => {
@@ -74,7 +74,7 @@ impl Agent for TraderAgent {
                     qty,
                     leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN LONG 5x qty={}", self.name, qty);
+                println!("[Trader {}] OPEN LONG 5x qty={:.1}", self.name, qty);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_long_position = true;
             }
@@ -98,7 +98,7 @@ impl Agent for TraderAgent {
                     qty,
                     leverage: 5, // default 5x leverage
                 });
-                println!("[Trader {}] OPEN SHORT 5x qty={}", self.name, qty);
+                println!("[Trader {}] OPEN SHORT 5x qty={:.1}", self.name, qty);
                 sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
                 self.has_short_position = true;
             }

@@ -106,7 +106,7 @@ pub struct CsvExecutionLogger {
 
 impl CsvExecutionLogger {
     pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
-        let header = "ts,account,symbol,side,size_usd,collateral,execution_price,leverage,order_type";
+        let header = "ts,account,symbol,side,size_usd,collateral,execution_price,leverage,order_type,pnl";
         let file = open_csv_with_header(dir.as_ref(), "executions.csv", header)?;
         Ok(Self { file })
     }
@@ -124,11 +124,12 @@ impl EventListener for CsvExecutionLogger {
             execution_price,
             leverage,
             order_type,
+            pnl,
         } = event
         {
             let side_str = format!("{:?}", side);
             let line = format!(
-                "{ts},{account},{symbol},{side},{size_usd},{collateral},{execution_price},{leverage},{order_type}\n",
+                "{ts},{account},{symbol},{side},{size_usd},{collateral},{execution_price},{leverage},{order_type},{pnl}\n",
                 ts = ts,
                 account = account,
                 symbol = symbol,
@@ -138,6 +139,7 @@ impl EventListener for CsvExecutionLogger {
                 execution_price = execution_price,
                 leverage = leverage,
                 order_type = order_type,
+                pnl = pnl,
             );
 
             if let Err(e) = self.file.write_all(line.as_bytes()) {

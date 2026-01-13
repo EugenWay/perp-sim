@@ -6,7 +6,7 @@ use crate::agents::Agent;
 use crate::api::{ApiCommand, ApiResponse};
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    PositionLiquidatedPayload, Side, SimulatorApi,
+    OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, Side, SimulatorApi,
 };
 
 /// Initial balance for Human trader (in micro-USD = $10,000)
@@ -22,8 +22,10 @@ pub struct HumanAgent {
     open_positions: std::collections::HashMap<String, Side>,
     /// Total collateral locked in open positions
     collateral_used: i128,
-    /// Initial balance
-    initial_balance: i128,
+    /// Current balance (updated with PnL from closed positions)
+    balance: i128,
+    /// Total realized PnL
+    total_pnl: i128,
 }
 
 impl HumanAgent {
@@ -44,13 +46,14 @@ impl HumanAgent {
             wake_interval_ns: wake_interval_ms * 1_000_000,
             open_positions: std::collections::HashMap::new(),
             collateral_used: 0,
-            initial_balance: INITIAL_BALANCE,
+            balance: INITIAL_BALANCE,
+            total_pnl: 0,
         }
     }
 
-    /// Get available balance (initial - collateral used)
+    /// Get available balance (balance - collateral used)
     pub fn available_balance(&self) -> i128 {
-        self.initial_balance - self.collateral_used
+        self.balance - self.collateral_used
     }
 
     fn process_commands(&mut self, sim: &mut dyn SimulatorApi) {
@@ -84,7 +87,7 @@ impl HumanAgent {
             },
         };
 
-        let qty = cmd.qty.unwrap_or(1);
+        let qty = cmd.qty.unwrap_or(1.0);
         let leverage = cmd.leverage.unwrap_or(5);
 
         sim.send(
@@ -103,7 +106,7 @@ impl HumanAgent {
 
         ApiResponse {
             success: true,
-            message: format!("Order: {} {:?} qty={} lev={}x", cmd.symbol, side, qty, leverage),
+            message: format!("Order: {} {:?} qty={:.2} lev={}x", cmd.symbol, side, qty, leverage),
             data: Some(serde_json::json!({
                 "symbol": cmd.symbol,
                 "side": format!("{:?}", side),
@@ -160,10 +163,56 @@ impl HumanAgent {
             success: true,
             message: format!("Balance: ${:.2}", available as f64 / 1_000_000.0),
             data: Some(serde_json::json!({
-                "initial_balance": self.initial_balance,
+                "balance": self.balance,
                 "collateral_used": self.collateral_used,
                 "available_balance": available,
+                "total_pnl": self.total_pnl,
             })),
+        }
+    }
+
+    fn handle_order_executed(&mut self, payload: &OrderExecutedPayload) {
+        match payload.order_type {
+            OrderExecutionType::Increase => {
+                // Opening position - lock collateral
+                self.collateral_used += payload.collateral_delta;
+                println!(
+                    "[{}] Position opened: {} {:?} size=${:.2} collateral=${:.2}",
+                    self.name,
+                    payload.symbol,
+                    payload.side,
+                    payload.size_usd as f64 / 1_000_000.0,
+                    payload.collateral_delta as f64 / 1_000_000.0
+                );
+            }
+            OrderExecutionType::Decrease => {
+                // Closing position - return collateral and apply PnL
+                // collateral_delta is negative (returned)
+                self.collateral_used += payload.collateral_delta; // Adds negative = decreases
+                self.balance += payload.pnl;
+                self.total_pnl += payload.pnl;
+                println!(
+                    "[{}] Position closed: {} {:?} pnl=${:.2} balance=${:.2}",
+                    self.name,
+                    payload.symbol,
+                    payload.side,
+                    payload.pnl as f64 / 1_000_000.0,
+                    self.balance as f64 / 1_000_000.0
+                );
+            }
+            OrderExecutionType::Liquidation => {
+                // Liquidation - collateral is lost
+                self.collateral_used += payload.collateral_delta;
+                self.balance += payload.pnl;
+                self.total_pnl += payload.pnl;
+                println!(
+                    "[{}] ⚠️ Liquidated: {} {:?} pnl=${:.2}",
+                    self.name,
+                    payload.symbol,
+                    payload.side,
+                    payload.pnl as f64 / 1_000_000.0
+                );
+            }
         }
     }
 }
@@ -173,19 +222,29 @@ impl Agent for HumanAgent {
     fn name(&self) -> &str { &self.name }
 
     fn on_start(&mut self, sim: &mut dyn SimulatorApi) {
-        println!("[{}] started, waiting for API commands", self.name);
+        println!("[{}] ====== STARTED id={} balance=${:.2} ======", self.name, self.id, self.balance as f64 / 1_000_000.0);
         sim.wakeup(self.id, sim.now_ns() + self.wake_interval_ns);
     }
 
     fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, _now_ns: u64) {
+        // Check for pending commands
+        let pending = self.command_rx.len();
+        if pending > 0 {
+            println!("[{}] Processing {} pending commands", self.name, pending);
+        }
         self.process_commands(sim);
         sim.wakeup(self.id, sim.now_ns() + self.wake_interval_ns);
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
         match msg.msg_type {
-            MessageType::OrderAccepted | MessageType::OrderRejected | MessageType::OrderExecuted => {
+            MessageType::OrderAccepted | MessageType::OrderRejected => {
                 println!("[{}] received {:?}", self.name, msg.msg_type);
+            }
+            MessageType::OrderExecuted => {
+                if let MessagePayload::OrderExecuted(payload) = &msg.payload {
+                    self.handle_order_executed(payload);
+                }
             }
             MessageType::PositionLiquidated => {
                 if let MessagePayload::PositionLiquidated(PositionLiquidatedPayload { symbol, side, pnl, collateral_lost, .. }) = &msg.payload {
@@ -199,6 +258,10 @@ impl Agent for HumanAgent {
                         *pnl as f64 / 1_000_000.0,
                         *collateral_lost as f64 / 1_000_000.0
                     );
+                    // Update balance
+                    self.balance += *pnl;
+                    self.total_pnl += *pnl;
+                    self.collateral_used -= *collateral_lost;
                     // Remove position tracking
                     self.open_positions.remove(symbol);
                 }

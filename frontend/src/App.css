@@ -432,6 +432,23 @@ body {
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  position: relative;
+}
+
+.position-close-x {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: auto;
+  transition: color 0.2s;
+}
+
+.position-close-x:hover {
+  color: var(--red);
 }
 
 .position-header .side {
@@ -506,8 +523,13 @@ body {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .btn-close {

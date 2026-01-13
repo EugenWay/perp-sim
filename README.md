@@ -174,9 +174,12 @@ Scenarios are JSON files in `sim-engine/src/scenarios/`.
 | ------------------- | ----------- | -------- | ------------------------ |
 | **Prices**          | micro-USD   | 1e-6 USD | `2939000000` = $2,939.00 |
 | **Size/Collateral** | micro-USD   | 1e-6 USD | `585000000` = $585.00    |
+| **Order qty**       | tokens      | f64      | `0.5` = 0.5 ETH          |
 | **Liquidity**       | micro-USD   | 1e-6 USD | `20000000000000` = $20M  |
 | **Timestamps**      | nanoseconds | 1e-9 sec | Unix epoch in ns         |
 | **Leverage**        | integer     | 1x       | `5` = 5x leverage        |
+
+**Note:** Order `qty` field is **number of tokens** as float. E.g., `qty: 0.5` at ETH price $3000 with leverage 5x opens a $1500 position ($300 collateral).
 
 ### Internal (perp-futures engine)
 

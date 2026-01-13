@@ -86,7 +86,10 @@ impl WsServer {
                 println!("[WsServer] Broadcast thread started, waiting for events...");
                 // Loop to handle events
                 while let Ok(event) = event_rx.recv() {
-                    println!("[WsServer] Broadcasting event: {:?}", std::mem::discriminant(&event));
+                    // Log OrderExecuted with pnl for debugging
+                    if let SimEvent::OrderExecuted { account, pnl, .. } = &event {
+                        println!("[WsServer] OrderExecuted account={} pnl={}", account, pnl);
+                    }
                     let json = match serde_json::to_string(&WsMessage::Event(event)) {
                         Ok(j) => j,
                         Err(e) => {

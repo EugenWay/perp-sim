@@ -13,7 +13,7 @@ pub enum SimEvent {
         symbol: Option<String>,
         side: Option<Side>,
         price: Option<u64>,
-        qty: Option<u64>,
+        qty: Option<f64>,
     },
 
     /// Order executed by exchange
@@ -27,6 +27,7 @@ pub enum SimEvent {
         execution_price: u64, // Execution price in micro-USD
         leverage: u32,
         order_type: String,  // "Increase", "Decrease", "Liquidation"
+        pnl: i64,            // PnL on close (0 for open)
     },
 
     /// Oracle price update

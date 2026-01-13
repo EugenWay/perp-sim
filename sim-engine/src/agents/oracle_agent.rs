@@ -66,7 +66,7 @@ impl Agent for OracleAgent {
         self.block_number += 1;
 
         // Only print every 10th block to reduce noise
-        let verbose = self.block_number <= 3 || self.block_number % 10 == 0;
+        let verbose = self.block_number <= 3 || self.block_number.is_multiple_of(10);
 
         if verbose {
         println!(

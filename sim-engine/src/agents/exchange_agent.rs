@@ -2,7 +2,8 @@ use crate::agents::Agent;
 use crate::events::SimEvent;
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, PositionLiquidatedPayload, Side as SimSide, SimulatorApi,
+    OracleTickPayload, OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload,
+    Side as SimSide, SimulatorApi,
 };
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
@@ -62,6 +63,8 @@ fn pnl_to_micro_usd(pnl: SignedU256) -> i64 {
 
 /// Convert USD(1e30) to micro-USD for display  
 fn usd_to_micro(usd: U256) -> u64 {
+    // USD(1e30) -> micro-USD (1e6): divide by 10^24
+    // BUT: size_usd in positions is absolute USD(1e30), so divide by 10^24 for display
     let divisor = U256::exp10(24);
     (usd / divisor).low_u64()
 }
@@ -220,16 +223,13 @@ impl ExchangeAgent {
                 .add_liquidity(market_id, collateral_asset, collateral_atoms);
 
             // Index tokens: as provided (already in atoms or conceptual units)
-            state.pool_balances.add_liquidity(
-                market_id,
-                index_asset,
-                U256::from(market_cfg.index_amount as u128),
-            );
+            state
+                .pool_balances
+                .add_liquidity(market_id, index_asset, U256::from(market_cfg.index_amount as u128));
 
             // Configure market state
             // liquidity_usd in USD(1e30): convert from micro-USD
-            let liquidity_usd_1e30 =
-                U256::from(market_cfg.liquidity_usd as u128) * U256::exp10(24);
+            let liquidity_usd_1e30 = U256::from(market_cfg.liquidity_usd as u128) * U256::exp10(24);
             {
                 let market = state.markets.entry(market_id).or_default();
                 market.id = market_id;
@@ -301,11 +301,7 @@ impl ExchangeAgent {
     /// Emit snapshots for all positions and market state
     /// Called on each oracle tick to track PnL evolution
     /// Returns list of (agent_id, symbol, side) for liquidatable positions
-    fn emit_snapshots(
-        &self,
-        sim: &mut dyn SimulatorApi,
-        now_ns: u64,
-    ) -> Vec<(AgentId, String, Side)> {
+    fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) -> Vec<(AgentId, String, Side)> {
         // Reverse lookup: account_id -> agent_id
         let account_to_agent: HashMap<AccountId, AgentId> =
             self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
@@ -364,9 +360,7 @@ impl ExchangeAgent {
 
             // Convert USD(1e30) values to micro-USD for display
             let size_usd_micro = usd_to_micro(position.size_usd);
-            let collateral_micro = (position.collateral_amount * U256::exp10(24)
-                / U256::exp10(24))
-            .low_u64(); // atoms to micro (simplified for $1 collateral)
+            let collateral_micro = (position.collateral_amount * U256::exp10(24) / U256::exp10(24)).low_u64(); // atoms to micro (simplified for $1 collateral)
 
             sim.emit_event(SimEvent::PositionSnapshot {
                 ts: now_ns,
@@ -477,26 +471,105 @@ impl ExchangeAgent {
             None => return Err("No position found for liquidation".into()),
         };
 
-        // Get PnL from engine
-        let pnl_micro = match self.executor.is_liquidatable_by_margin(now, key) {
-            Ok(preview) => pnl_to_micro_usd(preview.pnl_usd),
-            Err(_) => 0,
+        // Get detailed liquidation info from engine
+        let (pnl_micro, _liquidation_preview) = match self.executor.is_liquidatable_by_margin(now, key) {
+            Ok(preview) => {
+                let pnl = pnl_to_micro_usd(preview.pnl_usd);
+                println!(
+                    "[Exchange {}] 🔍 LIQUIDATION PREVIEW for {} agent={} side={:?}:",
+                    self.name, symbol, agent_id, side
+                );
+                println!("  ├─ RAW PNL from engine: {:?}", preview.pnl_usd);
+                println!("  ├─ PNL in micro-USD: ${:.2}", pnl as f64 / 1_000_000.0);
+                println!("  ├─ is_liquidatable: {}", preview.is_liquidatable);
+                println!(
+                    "  ├─ collateral_value_usd: ${:.2}",
+                    usd_to_micro(preview.collateral_value_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  ├─ price_impact_usd: ${:.2}",
+                    pnl_to_micro_usd(preview.price_impact_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  ├─ borrowing_fee_usd: ${:.2}",
+                    usd_to_micro(preview.borrowing_fee_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  ├─ funding_fee_usd: ${:.2}",
+                    pnl_to_micro_usd(preview.funding_fee_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  ├─ close_fees_usd: ${:.2}",
+                    usd_to_micro(preview.close_fees_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  ├─ equity_usd: ${:.2}",
+                    pnl_to_micro_usd(preview.equity_usd) as f64 / 1_000_000.0
+                );
+                println!(
+                    "  └─ required_usd: ${:.2}",
+                    usd_to_micro(preview.required_usd) as f64 / 1_000_000.0
+                );
+                (pnl, Some(preview))
+            }
+            Err(e) => {
+                println!(
+                    "[Exchange {}] ⚠️  Could not get liquidation preview: {:?}",
+                    self.name, e
+                );
+                (0, None)
+            }
         };
 
         let size_usd_micro = usd_to_micro(position.size_usd) as i64;
         let collateral_micro = position.collateral_amount.low_u64() as i64;
         let current_price_micro = self.last_prices.get(&symbol).copied().unwrap_or(0);
 
+        // Get liquidation price from engine
+        let liq_price_micro = match self.executor.calculate_liquidation_price(now, key) {
+            Ok(liq_price_atom) => {
+                let (index_decimals, _collateral_decimals) =
+                    self.symbol_decimals.get(&symbol).copied().unwrap_or((18, 6));
+                denormalize_price_from_atom(liq_price_atom, index_decimals)
+            }
+            Err(_) => 0,
+        };
+
+        // Calculate leverage (size_usd in USD(1e30) / collateral_amount in atoms)
+        // For USDC (6 decimals), 1 atom = 1 micro-USD
+        // So collateral in USD = collateral_amount * 1e-6 (in actual USD)
+        // size_usd is in USD(1e30), so size in actual USD = size_usd / 1e30
+        // leverage = (size_usd / 1e30) / (collateral_amount * 1e-6)
+        //          = size_usd / (collateral_amount * 1e24)
+        let leverage_calc = if !position.collateral_amount.is_zero() {
+            let denominator = position.collateral_amount * U256::exp10(24);
+            if !denominator.is_zero() {
+                (position.size_usd / denominator).low_u64()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
         println!(
-            "[Exchange {}] 🔥 EXECUTING LIQUIDATION: {} {:?} agent={} size=${:.2} pnl=${:.2} collateral=${:.2}",
-            self.name,
-            symbol,
-            side,
-            agent_id,
-            size_usd_micro as f64 / 1_000_000.0,
-            pnl_micro as f64 / 1_000_000.0,
-            collateral_micro as f64 / 1_000_000.0,
+            "[Exchange {}] 🔥 EXECUTING LIQUIDATION: {} {:?} agent={}",
+            self.name, symbol, side, agent_id
         );
+        println!(
+            "  ├─ Position size: ${:.2} (raw: {})",
+            size_usd_micro as f64 / 1_000_000.0,
+            position.size_usd
+        );
+        println!(
+            "  ├─ Collateral: ${:.2} (raw: {} atoms)",
+            collateral_micro as f64 / 1_000_000.0,
+            position.collateral_amount
+        );
+        println!("  ├─ PnL: ${:.2}", pnl_micro as f64 / 1_000_000.0);
+        println!("  ├─ Current price: ${:.2}", current_price_micro as f64 / 1_000_000.0);
+        println!("  ├─ Liquidation price: ${:.2}", liq_price_micro as f64 / 1_000_000.0);
+        println!("  └─ Calculated Leverage: {}x", leverage_calc);
 
         // Create liquidation order using OrderType::Liquidation
         let perp_order = Order {
@@ -534,6 +607,7 @@ impl ExchangeAgent {
                     execution_price: current_price_micro,
                     leverage: 0,
                     order_type: "Liquidation".to_string(),
+                    pnl: pnl_micro,
                 });
 
                 // Emit specific liquidation event for detailed analytics
@@ -549,15 +623,7 @@ impl ExchangeAgent {
                 });
 
                 // Send notification to trader
-                self.notify_liquidation(
-                    sim,
-                    agent_id,
-                    symbol,
-                    side,
-                    size_usd_micro,
-                    pnl_micro,
-                    collateral_micro,
-                );
+                self.notify_liquidation(sim, agent_id, symbol, side, size_usd_micro, pnl_micro, collateral_micro);
 
                 Ok(())
             }
@@ -685,6 +751,20 @@ impl ExchangeAgent {
         let now: Timestamp = now_ns / 1_000_000_000;
         let execution_price = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
 
+        // Calculate PnL before closing using engine's liquidation preview
+        let pnl_micro = match self.executor.is_liquidatable_by_margin(now, position_key) {
+            Ok(preview) => {
+                let pnl = pnl_to_micro_usd(preview.pnl_usd);
+                println!("[Exchange {}] CLOSE PnL preview: is_neg={} pnl_micro={}", 
+                    self.name, preview.pnl_usd.is_negative, pnl);
+                pnl
+            },
+            Err(e) => {
+                println!("[Exchange {}] CLOSE PnL error: {:?}", self.name, e);
+                0
+            },
+        };
+
         // Create decrease order for full position size
         // Note: withdraw_collateral_amount = 0 lets the executor calculate the correct payout
         // after accounting for PnL, fees, etc.
@@ -720,6 +800,13 @@ impl ExchangeAgent {
                     size_usd_micro as f64 / 1_000_000.0
                 );
 
+                println!(
+                    "[Exchange {}] CLOSE PnL: ${:.2} (collateral returned: ${:.2})",
+                    self.name,
+                    pnl_micro as f64 / 1_000_000.0,
+                    collateral_micro as f64 / 1_000_000.0
+                );
+
                 // Emit execution event
                 sim.emit_event(SimEvent::OrderExecuted {
                     ts: now_ns,
@@ -731,7 +818,33 @@ impl ExchangeAgent {
                     execution_price,
                     leverage: 0, // N/A for close
                     order_type: "Decrease".to_string(),
+                    pnl: pnl_micro,
                 });
+                
+                println!("[Exchange {}] Emitted OrderExecuted from={} pnl={}", self.name, from, pnl_micro);
+
+                // Send message to agent with execution details
+                // On close: collateral is returned (negative delta), include PnL
+                sim.send(
+                    self.id,
+                    from,
+                    MessageType::OrderExecuted,
+                    MessagePayload::OrderExecuted(OrderExecutedPayload {
+                        symbol: order.symbol.clone(),
+                        side: order.side,
+                        order_type: OrderExecutionType::Decrease,
+                        collateral_delta: -(collateral_micro as i128), // Returned
+                        pnl: pnl_micro as i128,
+                        size_usd: size_usd_micro as i128,
+                    }),
+                );
+
+                println!(
+                    "[Exchange {}] CLOSE PnL: ${:.2} (collateral returned: ${:.2})",
+                    self.name,
+                    pnl_micro as f64 / 1_000_000.0,
+                    collateral_micro as f64 / 1_000_000.0
+                );
 
                 if let Some(market) = self.executor.state.markets.get(&market_id) {
                     println!(
@@ -771,11 +884,8 @@ impl ExchangeAgent {
         };
 
         // Get decimals for proper conversion
-        let (_index_decimals, collateral_decimals) = self
-            .symbol_decimals
-            .get(&order.symbol)
-            .copied()
-            .unwrap_or((18, 6));
+        let (_index_decimals, collateral_decimals) =
+            self.symbol_decimals.get(&order.symbol).copied().unwrap_or((18, 6));
 
         let account = self.get_or_create_account(from);
         let side = Self::convert_side(order.side);
@@ -791,17 +901,30 @@ impl ExchangeAgent {
 
         let now: Timestamp = now_ns / 1_000_000_000;
 
-        // order.qty is collateral amount in micro-USD (1e6 = $1)
-        // Convert to collateral atoms: qty_micro * 10^collateral_decimals / 10^6
-        // For USDC (6 decimals): atoms = qty_micro (same scale)
+        // order.qty = number of tokens as f64 (e.g., 0.5 = 0.5 ETH, 2.0 = 2 ETH)
+        // Get current price in micro-USD
+        let current_price_micro = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
+
+        // size = qty * price (in micro-USD)
+        // e.g., 0.5 ETH * $3115 = $1557.50 = 1557_500_000 micro-USD
+        let size_micro = (order.qty * current_price_micro as f64) as u64;
+
+        // collateral = size / leverage (in micro-USD)
+        // e.g., $1557.50 / 5 = $311.50 = 311_500_000 micro-USD
+        let leverage = order.leverage.max(1) as u64;
+        let collateral_micro = size_micro / leverage;
+
+        // Convert micro-USD to collateral atoms
+        // For USDC (6 decimals): atoms = micro-USD (same scale)
         let collateral_atoms = if collateral_decimals >= 6 {
-            U256::from(order.qty) * U256::exp10((collateral_decimals - 6) as usize)
+            U256::from(collateral_micro) * U256::exp10((collateral_decimals - 6) as usize)
         } else {
-            U256::from(order.qty) / U256::exp10((6 - collateral_decimals) as usize)
+            U256::from(collateral_micro) / U256::exp10((6 - collateral_decimals) as usize)
         };
 
-        // Engine derives size_delta_usd from collateral_delta_tokens * collateral_price * leverage
-        // We pass size_delta_usd = 0 to let engine calculate it
+        // Convert size to USD(1e30) for engine
+        let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
+
         let perp_order = Order {
             account,
             market_id,
@@ -809,7 +932,7 @@ impl ExchangeAgent {
             side,
             order_type: OrderType::Increase,
             collateral_delta_tokens: collateral_atoms,
-            size_delta_usd: U256::zero(), // Engine calculates from collateral * leverage
+            size_delta_usd: size_usd_1e30, // Explicit size in USD(1e30)
             withdraw_collateral_amount: U256::zero(),
             target_leverage_x: order.leverage.max(1),
             created_at: now,
@@ -818,7 +941,6 @@ impl ExchangeAgent {
         };
 
         let order_id = self.executor.submit_order(perp_order);
-        let current_price_micro = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
 
         match self.executor.execute_order(now, order_id) {
             Ok(()) => {
@@ -830,11 +952,15 @@ impl ExchangeAgent {
                     side,
                 };
 
-                let (size_usd_micro, collateral_micro) =
+                let (size_usd_micro, coll_micro_actual) =
                     if let Some(pos) = self.executor.state.positions.get(&position_key) {
-                        (usd_to_micro(pos.size_usd), pos.collateral_amount.low_u64())
+                        let size_m = usd_to_micro(pos.size_usd);
+                        // collateral_amount is in atoms (USDC 6 decimals = already micro scale)
+                        let coll_m = pos.collateral_amount.low_u64();
+                        (size_m, coll_m)
                     } else {
-                        (order.qty * order.leverage as u64, order.qty)
+                        // Fallback (shouldn't happen): estimate from order
+                        (size_micro, collateral_micro)
                     };
 
                 println!(
@@ -843,7 +969,7 @@ impl ExchangeAgent {
                     order.symbol,
                     from,
                     order.side,
-                    order.qty as f64 / 1_000_000.0,
+                    coll_micro_actual as f64 / 1_000_000.0,
                     size_usd_micro as f64 / 1_000_000.0,
                     order.leverage
                 );
@@ -855,11 +981,28 @@ impl ExchangeAgent {
                     symbol: order.symbol.clone(),
                     side: order.side,
                     size_usd: size_usd_micro,
-                    collateral: collateral_micro,
+                    collateral: coll_micro_actual,
                     execution_price: current_price_micro,
                     leverage: order.leverage,
                     order_type: "Increase".to_string(),
+                    pnl: 0, // No PnL on open
                 });
+
+                // Send message to agent with execution details
+                // On open: collateral is locked (positive delta)
+                sim.send(
+                    self.id,
+                    from,
+                    MessageType::OrderExecuted,
+                    MessagePayload::OrderExecuted(OrderExecutedPayload {
+                        symbol: order.symbol.clone(),
+                        side: order.side,
+                        order_type: OrderExecutionType::Increase,
+                        collateral_delta: coll_micro_actual as i128, // Locked
+                        pnl: 0,
+                        size_usd: size_usd_micro as i128,
+                    }),
+                );
 
                 if let Some(market) = self.executor.state.markets.get(&market_id) {
                     println!(

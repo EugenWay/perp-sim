@@ -42,18 +42,21 @@
       "id": 10,
       "name": "Trader_Fast",
       "symbol": "BTC-USD",
+      "qty": 1,
       "wake_interval_ms": 1000
     },
     {
       "id": 11,
       "name": "Trader_Slow",
       "symbol": "BTC-USD",
+      "qty": 2,
       "wake_interval_ms": 5000
     },
     {
       "id": 12,
       "name": "Trader_Random",
       "symbol": "BTC-USD",
+      "qty": 1,
       "wake_interval_ms": 3000
     }
   ]

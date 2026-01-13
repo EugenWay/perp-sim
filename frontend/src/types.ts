@@ -48,6 +48,7 @@ export interface OrderExecuted {
   execution_price: number;
   leverage: number;
   order_type: string;
+  pnl: number;
 }
 
 export interface OrderLog {
@@ -87,12 +88,25 @@ export interface WsMessage {
 export const AGENT_NAMES: Record<number, string> = {
   1: 'Exchange',
   2: 'Oracle',
-  10: 'CyclicTrader',
-  20: 'HodlerLong',
-  21: 'HodlerShort',
-  30: 'Risky10x',
-  31: 'Risky20x',
-  40: 'TrendFollower',
+  3: 'Trader1',
+  // Scalpers (fast, small trades)
+  20: 'Scalp1_L', 21: 'Scalp1_S',
+  22: 'Scalp2_L', 23: 'Scalp2_S',
+  24: 'Scalp3_L', 25: 'Scalp3_S',
+  26: 'Scalp4_L', 27: 'Scalp4_S',
+  // Day traders (medium)
+  30: 'Day1_L', 31: 'Day1_S',
+  32: 'Day2_L', 33: 'Day2_S',
+  34: 'Day3_L', 35: 'Day3_S',
+  36: 'Day4_L', 37: 'Day4_S',
+  // Swing traders (slower)
+  40: 'Swing1_L', 41: 'Swing1_S',
+  42: 'Swing2_L', 43: 'Swing2_S',
+  // Whales (rare, big)
+  50: 'Whale1_L', 51: 'Whale1_S',
+  52: 'Whale2_L', 53: 'Whale2_S',
+  // System
+  70: 'LiqBot',
   100: 'Human',
 };
 

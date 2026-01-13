@@ -1,13 +1,10 @@
 //! Liquidation Agent
-//!
 //! Periodically scans all open positions and triggers liquidation for underwater positions.
 //! This agent wakes up at a fixed interval (e.g., 200ms) and sends liquidation scan requests
 //! to the Exchange agent.
 
 use crate::agents::Agent;
-use crate::messages::{
-    AgentId, Message, MessagePayload, MessageType, LiquidationTaskPayload, SimulatorApi,
-};
+use crate::messages::{AgentId, LiquidationTaskPayload, Message, MessagePayload, MessageType, SimulatorApi};
 
 pub struct LiquidationAgent {
     id: AgentId,
@@ -18,19 +15,7 @@ pub struct LiquidationAgent {
 }
 
 impl LiquidationAgent {
-    /// Create a new LiquidationAgent
-    /// 
-    /// # Arguments
-    /// * `id` - Unique agent identifier
-    /// * `name` - Agent name for logging
-    /// * `exchange_id` - The exchange agent to send liquidation requests to
-    /// * `wake_interval_ns` - How often to scan for liquidations (in nanoseconds)
-    pub fn new(
-        id: AgentId,
-        name: String,
-        exchange_id: AgentId,
-        wake_interval_ns: u64,
-    ) -> Self {
+    pub fn new(id: AgentId, name: String, exchange_id: AgentId, wake_interval_ns: u64) -> Self {
         Self {
             id,
             name,
@@ -40,12 +25,11 @@ impl LiquidationAgent {
         }
     }
 
-    /// Scan for liquidatable positions
     fn scan_liquidations(&mut self, sim: &mut dyn SimulatorApi) {
         self.scan_count += 1;
 
         // Log every 10th scan to reduce noise
-        let verbose = self.scan_count <= 3 || self.scan_count % 10 == 0;
+        let verbose = self.scan_count <= 3 || self.scan_count.is_multiple_of(10);
 
         if verbose {
             println!(
@@ -60,15 +44,10 @@ impl LiquidationAgent {
         // The exchange will check all positions and execute liquidations if needed
         let payload = MessagePayload::LiquidationTask(LiquidationTaskPayload {
             symbol: "ALL".to_string(), // Scan all symbols
-            max_positions: 1000, // Max positions to check in one scan
+            max_positions: 1000,       // Max positions to check in one scan
         });
 
-        sim.send(
-            self.id,
-            self.exchange_id,
-            MessageType::LiquidationScan,
-            payload,
-        );
+        sim.send(self.id, self.exchange_id, MessageType::LiquidationScan, payload);
     }
 }
 
@@ -116,10 +95,6 @@ impl Agent for LiquidationAgent {
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {
-        println!(
-            "[Liquidation {}] stopping after {} scans",
-            self.name, self.scan_count
-        );
+        println!("[Liquidation {}] stopping after {} scans", self.name, self.scan_count);
     }
 }
-

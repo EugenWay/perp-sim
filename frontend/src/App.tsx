@@ -76,25 +76,25 @@ function App() {
 
   const addTraderLog = (text: string, type: LogEntry['type'] = 'trader') => {
     const entry: LogEntry = { id: logIdRef.current++, ts: Date.now(), text, type };
-    setTraderLogs(prev => [entry, ...prev].slice(0, 500));
+    setTraderLogs((prev) => [entry, ...prev].slice(0, 500));
   };
 
   const addExchangeLog = (text: string, type: LogEntry['type'] = 'exchange') => {
     const entry: LogEntry = { id: logIdRef.current++, ts: Date.now(), text, type };
-    setExchangeLogs(prev => [entry, ...prev].slice(0, 500));
+    setExchangeLogs((prev) => [entry, ...prev].slice(0, 500));
   };
 
   const addToast = (type: Toast['type'], title: string, message: string) => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, type, title, message }]);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
     // Auto-remove after 3 seconds
     setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
+      setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 3000);
   };
 
   const removeToast = (id: number) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   const handleEvent = (event: SimEvent) => {
@@ -113,7 +113,7 @@ function App() {
     switch (event.event_type) {
       case 'OracleTick': {
         const e = event as OracleTick;
-        setPrices(prev => ({
+        setPrices((prev) => ({
           ...prev,
           [e.symbol]: { min: e.price_min, max: e.price_max },
         }));
@@ -123,7 +123,8 @@ function App() {
 
       case 'MarketSnapshot': {
         const e = event as MarketSnapshot;
-        setMarkets(prev => ({ ...prev, [e.symbol]: e }));
+        console.log('[MarketSnapshot]', e.symbol, 'OI Long:', e.oi_long_usd, 'OI Short:', e.oi_short_usd);
+        setMarkets((prev) => ({ ...prev, [e.symbol]: e }));
         break;
       }
 
@@ -131,10 +132,8 @@ function App() {
         const e = event as PositionSnapshot;
 
         if (e.account === HUMAN_AGENT_ID) {
-          setHumanPositions(prev => {
-            const filtered = prev.filter(
-              p => !(p.symbol === e.symbol && p.side === e.side)
-            );
+          setHumanPositions((prev) => {
+            const filtered = prev.filter((p) => !(p.symbol === e.symbol && p.side === e.side));
             const updated = [...filtered, e];
             // Calculate total collateral from ALL human positions
             const totalCollateral = updated.reduce((sum, p) => sum + p.collateral, 0);
@@ -147,6 +146,7 @@ function App() {
 
       case 'OrderExecuted': {
         const e = event as OrderExecuted;
+        console.log('[OrderExecuted]', e.account, e.order_type, 'pnl=', e.pnl, 'collateral=', e.collateral, e); // Debug
         const agentName = AGENT_NAMES[e.account] || `Agent#${e.account}`;
         const side = e.side === 'buy' ? 'LONG' : 'SHORT';
         const action = e.order_type === 'Increase' ? '📈 OPEN' : '📉 CLOSE';
@@ -154,31 +154,27 @@ function App() {
         const sizeStr = formatUsd(e.size_usd);
 
         if (e.account === HUMAN_AGENT_ID) {
-          addTraderLog(
-            `${action} ${side} ${sizeStr} @ ${priceStr}`,
-            'success'
-          );
+          addTraderLog(`${action} ${side} ${sizeStr} @ ${priceStr}`, 'success');
           // Show toast for Human executions
-          addToast(
-            'success',
-            `${action} ${side}`,
-            `${sizeStr} @ ${priceStr} (${e.leverage}x)`
-          );
-          // Update balance on close
-          if (e.order_type === 'Decrease') {
-            setHumanBalance(prev => prev + e.collateral);
+          addToast('success', `${action} ${side}`, `${sizeStr} @ ${priceStr} (${e.leverage}x)`);
+          // Update balance and remove position on close
+          if (e.order_type === 'Decrease' || e.order_type === 'Liquidation') {
+            // Return collateral and apply PnL (pnl may be undefined in old events)
+            const pnl = e.pnl || 0;
+            setHumanBalance((prev) => prev + e.collateral + pnl);
+            // Remove closed position from list
+            setHumanPositions((prev) => prev.filter((p) => !(p.symbol === e.symbol && p.side === e.side)));
+            // Log PnL
+            if (pnl !== 0) {
+              const pnlStr = formatUsd(pnl);
+              addTraderLog(`PnL: ${pnlStr}`, pnl >= 0 ? 'success' : 'error');
+            }
           }
         } else {
-          addTraderLog(
-            `${agentName}: ${action} ${side} ${sizeStr} @ ${priceStr} (${e.leverage}x)`,
-            'trader'
-          );
+          addTraderLog(`${agentName}: ${action} ${side} ${sizeStr} @ ${priceStr} (${e.leverage}x)`, 'trader');
         }
 
-        addExchangeLog(
-          `✅ ${agentName} ${side} ${sizeStr}`,
-          'exchange'
-        );
+        addExchangeLog(`✅ ${agentName} ${side} ${sizeStr}`, 'exchange');
         break;
       }
 
@@ -219,7 +215,7 @@ function App() {
 
     const connect = () => {
       if (!isMounted) return;
-      
+
       const ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
@@ -251,10 +247,10 @@ function App() {
           if (data.type === 'Event') {
             handleEvent(data.payload as SimEvent);
           } else if (data.type === 'Response') {
-            const resp = data.payload as { 
-              success: boolean; 
-              message: string; 
-              data?: { 
+            const resp = data.payload as {
+              success: boolean;
+              message: string;
+              data?: {
                 initial_balance?: number;
                 available_balance?: number;
                 collateral_used?: number;
@@ -271,10 +267,7 @@ function App() {
               } else {
                 addToast('error', '❌ Order Rejected', resp.message);
               }
-              addTraderLog(
-                resp.message,
-                resp.success ? 'success' : 'error'
-              );
+              addTraderLog(resp.message, resp.success ? 'success' : 'error');
             }
           } else if (data.type === 'Error') {
             addToast('error', '⚠️ Error', String(data.payload));
@@ -295,13 +288,17 @@ function App() {
       clearTimeout(reconnectTimeout);
       wsRef.current?.close();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty deps - connect only once
 
   const sendCommand = (cmd: ApiCommand) => {
+    console.log('[sendCommand]', cmd);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(cmd));
+      const json = JSON.stringify(cmd);
+      console.log('[sendCommand] Sending:', json);
+      wsRef.current.send(json);
     } else {
+      console.error('[sendCommand] WebSocket not open');
       addTraderLog('Not connected to simulator', 'error');
     }
   };
@@ -313,7 +310,11 @@ function App() {
       return;
     }
     if (estimatedCollateral > humanBalance) {
-      addToast('error', '❌ Insufficient Balance', `Need ${formatUsd(estimatedCollateral)}, have ${formatUsd(humanBalance)}`);
+      addToast(
+        'error',
+        '❌ Insufficient Balance',
+        `Need ${formatUsd(estimatedCollateral)}, have ${formatUsd(humanBalance)}`
+      );
       addTraderLog('Insufficient balance for this trade', 'error');
       return;
     }
@@ -327,10 +328,12 @@ function App() {
       leverage,
     });
     // Show actual qty in log (e.g., "4.7 → 5 tokens")
-    const qtyDisplay = estimatedQty.toFixed(2) !== qtyToSend.toString() 
-      ? `${estimatedQty.toFixed(2)} → ${qtyToSend}` 
-      : `${qtyToSend}`;
-    addTraderLog(`Order: ${selectedSymbol} ${side === 'long' ? 'Buy' : 'Sell'} qty=${qtyDisplay} lev=${leverage}x`, 'trader');
+    const qtyDisplay =
+      estimatedQty.toFixed(2) !== qtyToSend.toString() ? `${estimatedQty.toFixed(2)} → ${qtyToSend}` : `${qtyToSend}`;
+    addTraderLog(
+      `Order: ${selectedSymbol} ${side === 'long' ? 'Buy' : 'Sell'} qty=${qtyDisplay} lev=${leverage}x`,
+      'trader'
+    );
   };
 
   const closePosition = (symbol: string, side: Side) => {
@@ -365,13 +368,15 @@ function App() {
     <div className="app">
       {/* Toast Notifications */}
       <div className="toast-container">
-        {toasts.map(toast => (
+        {toasts.map((toast) => (
           <div key={toast.id} className={`toast toast-${toast.type}`}>
             <div className="toast-content">
               <div className="toast-title">{toast.title}</div>
               <div className="toast-message">{toast.message}</div>
             </div>
-            <button className="toast-close" onClick={() => removeToast(toast.id)}>×</button>
+            <button className="toast-close" onClick={() => removeToast(toast.id)}>
+              ×
+            </button>
           </div>
         ))}
       </div>
@@ -402,17 +407,13 @@ function App() {
         <section className="column traders-column">
           <h2>📊 Traders Activity</h2>
           <div className="log-container">
-            {traderLogs.map(log => (
+            {traderLogs.map((log) => (
               <div key={log.id} className={`log-entry ${log.type}`}>
-                <span className="log-time">
-                  {new Date(log.ts).toLocaleTimeString()}
-                </span>
+                <span className="log-time">{new Date(log.ts).toLocaleTimeString()}</span>
                 <span className="log-text">{log.text}</span>
               </div>
             ))}
-            {traderLogs.length === 0 && (
-              <div className="log-entry empty">Waiting for activity...</div>
-            )}
+            {traderLogs.length === 0 && <div className="log-entry empty">Waiting for activity...</div>}
           </div>
         </section>
 
@@ -440,11 +441,9 @@ function App() {
           ))}
 
           <div className="log-container">
-            {exchangeLogs.map(log => (
+            {exchangeLogs.map((log) => (
               <div key={log.id} className={`log-entry ${log.type}`}>
-                <span className="log-time">
-                  {new Date(log.ts).toLocaleTimeString()}
-                </span>
+                <span className="log-time">{new Date(log.ts).toLocaleTimeString()}</span>
                 <span className="log-text">{log.text}</span>
               </div>
             ))}
@@ -454,7 +453,7 @@ function App() {
         {/* Column 3: Human Trading Interface */}
         <section className="column human-column">
           <h2>🧑‍💻 Human Trader</h2>
-          
+
           {/* Balance */}
           <div className="balance-display">
             <span className="balance-label">Balance:</span>
@@ -465,28 +464,21 @@ function App() {
           <div className="trading-form">
             <div className="form-group">
               <label>Symbol</label>
-              <select
-                value={selectedSymbol}
-                onChange={e => setSelectedSymbol(e.target.value)}
-              >
-                {symbols.map(s => (
-                  <option key={s} value={s}>{s}</option>
+              <select value={selectedSymbol} onChange={(e) => setSelectedSymbol(e.target.value)}>
+                {symbols.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
-                {symbols.length === 0 && (
-                  <option value="ETH-USD">ETH-USD</option>
-                )}
+                {symbols.length === 0 && <option value="ETH-USD">ETH-USD</option>}
               </select>
             </div>
 
             <div className="form-group">
               <label>Leverage</label>
               <div className="leverage-buttons">
-                {[2, 5, 10, 20].map(lev => (
-                  <button
-                    key={lev}
-                    className={leverage === lev ? 'active' : ''}
-                    onClick={() => setLeverage(lev)}
-                  >
+                {[2, 5, 10, 20].map((lev) => (
+                  <button key={lev} className={leverage === lev ? 'active' : ''} onClick={() => setLeverage(lev)}>
                     {lev}x
                   </button>
                 ))}
@@ -494,13 +486,15 @@ function App() {
             </div>
 
             <div className="form-group">
-              <label>Margin: {marginPercent}% ({formatUsd(estimatedCollateral)})</label>
+              <label>
+                Margin: {marginPercent}% ({formatUsd(estimatedCollateral)})
+              </label>
               <input
                 type="range"
                 min="1"
                 max="100"
                 value={marginPercent}
-                onChange={e => setMarginPercent(Number(e.target.value))}
+                onChange={(e) => setMarginPercent(Number(e.target.value))}
                 className="margin-slider"
               />
               <div className="slider-labels">
@@ -519,7 +513,9 @@ function App() {
               </div>
               <div className="estimate-row">
                 <span>Tokens:</span>
-                <span>~{estimatedQty.toFixed(4)} {selectedSymbol.split('-')[0]}</span>
+                <span>
+                  ~{estimatedQty.toFixed(4)} {selectedSymbol.split('-')[0]}
+                </span>
               </div>
               <div className="estimate-row">
                 <span>Collateral:</span>
@@ -532,18 +528,10 @@ function App() {
             </div>
 
             <div className="trade-buttons">
-              <button
-                className="btn-long"
-                onClick={() => openPosition('long')}
-                disabled={!canTrade}
-              >
+              <button className="btn-long" onClick={() => openPosition('long')} disabled={!canTrade}>
                 📈 LONG
               </button>
-              <button
-                className="btn-short"
-                onClick={() => openPosition('short')}
-                disabled={!canTrade}
-              >
+              <button className="btn-short" onClick={() => openPosition('short')} disabled={!canTrade}>
                 📉 SHORT
               </button>
             </div>
@@ -560,7 +548,7 @@ function App() {
             {humanPositions.length === 0 ? (
               <div className="no-positions">No open positions</div>
             ) : (
-              humanPositions.map(pos => {
+              humanPositions.map((pos) => {
                 const pnl = formatPnl(pos.unrealized_pnl);
                 const side = pos.side === 'buy' ? 'LONG' : 'SHORT';
                 return (
@@ -569,6 +557,13 @@ function App() {
                       <span className={`side ${pos.side}`}>{side}</span>
                       <span className="symbol">{pos.symbol}</span>
                       <span className="leverage">{pos.leverage_actual}x</span>
+                      <button
+                        className="position-close-x"
+                        onClick={() => closePosition(pos.symbol, pos.side)}
+                        title="Close position"
+                      >
+                        ×
+                      </button>
                     </div>
                     <div className="position-details">
                       <div className="detail-row">
@@ -592,13 +587,8 @@ function App() {
                         <span className="pnl">{pnl.text}</span>
                       </div>
                     </div>
-                    {pos.is_liquidatable && (
-                      <div className="liquidation-warning">⚠️ LIQUIDATION RISK</div>
-                    )}
-                    <button
-                      className="btn-close"
-                      onClick={() => closePosition(pos.symbol, pos.side)}
-                    >
+                    {pos.is_liquidatable && <div className="liquidation-warning">⚠️ LIQUIDATION RISK</div>}
+                    <button className="btn-close" onClick={() => closePosition(pos.symbol, pos.side)}>
                       Close Position
                     </button>
                   </div>

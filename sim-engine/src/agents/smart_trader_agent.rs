@@ -8,11 +8,12 @@
 use crate::agents::Agent;
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, PositionLiquidatedPayload, Side, SimulatorApi,
+    OrderExecutedPayload, OrderExecutionType, OracleTickPayload, PositionLiquidatedPayload, Side,
+    SimulatorApi,
 };
+use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// Default starting balance for each trader (in micro-USD = $10,000)
 const DEFAULT_BALANCE: i128 = 10_000_000_000;
@@ -45,8 +46,8 @@ pub struct SmartTraderConfig {
     pub exchange_id: AgentId,
     pub symbol: String,
     pub strategy: TradingStrategy,
-    pub qty_min: u64,
-    pub qty_max: u64,
+    pub qty_min: f64,
+    pub qty_max: f64,
     pub wake_interval_ms: u64,
 }
 
@@ -57,8 +58,8 @@ pub struct SmartTraderAgent {
     exchange_id: AgentId,
     symbol: String,
     strategy: TradingStrategy,
-    qty_min: u64,
-    qty_max: u64,
+    qty_min: f64,
+    qty_max: f64,
     wake_interval_ns: u64,
 
     // Position tracking
@@ -107,16 +108,20 @@ impl SmartTraderAgent {
     }
 
     /// Generate random qty within configured range using timestamp as seed
-    fn random_qty(&self, now_ns: u64) -> u64 {
-        if self.qty_min == self.qty_max {
-            return self.qty_min;
+    /// Returns quantity in tokens as f64 (e.g. 0.5 = half a token)
+    fn random_qty(&self, now_ns: u64) -> f64 {
+        if (self.qty_max - self.qty_min).abs() < 0.001 {
+            return self.qty_min.max(0.01);
         }
         // Simple hash-based randomization using timestamp + trader id
         let mut hasher = DefaultHasher::new();
         (now_ns, self.id, self.trades_opened).hash(&mut hasher);
         let hash = hasher.finish();
-        let range = self.qty_max - self.qty_min + 1;
-        self.qty_min + (hash % range)
+
+        // Generate random float between qty_min and qty_max
+        let range = self.qty_max - self.qty_min;
+        let fraction = (hash % 1000) as f64 / 1000.0; // 0.0 - 0.999
+        self.qty_min + (range * fraction)
     }
 
     /// Check if trader has enough balance to open a position
@@ -134,8 +139,12 @@ impl SmartTraderAgent {
 
     fn open_position(&mut self, sim: &mut dyn SimulatorApi, side: Side, now_ns: u64) {
         let leverage = self.get_leverage();
-        let qty = self.random_qty(now_ns);
-        let collateral_needed = qty as i128; // qty is collateral in micro-USD
+        let qty_tokens = self.random_qty(now_ns); // in tokens as f64 (e.g. 0.5)
+        // qty_tokens = tokens as float, current_price = micro-USD per token
+        // size = qty_tokens * price (in micro-USD)
+        let price_micro = self.current_price.unwrap_or(1_000_000) as i128; // Default $1 if no price
+        let size_micro = (qty_tokens * price_micro as f64) as i128; // size in micro-USD
+        let collateral_needed = size_micro / self.get_leverage() as i128;
 
         // Check if we can afford it
         if !self.can_afford(collateral_needed) {
@@ -151,7 +160,7 @@ impl SmartTraderAgent {
         let payload = MessagePayload::MarketOrder(MarketOrderPayload {
             symbol: self.symbol.clone(),
             side,
-            qty,
+            qty: qty_tokens,
             leverage,
         });
 
@@ -161,20 +170,15 @@ impl SmartTraderAgent {
         };
 
         println!(
-            "[SmartTrader {}] OPEN {} {}x qty={} tokens (balance: ${:.2})",
-            self.name, 
-            side_str, 
-            leverage, 
-            qty,
+            "[SmartTrader {}] OPEN {} {}x qty={:.2} tokens (balance: ${:.2})",
+            self.name,
+            side_str,
+            leverage,
+            qty_tokens,
             self.balance as f64 / 1_000_000.0
         );
 
-        sim.send(
-            self.id,
-            self.exchange_id,
-            MessageType::MarketOrder,
-            payload,
-        );
+        sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
 
         // Lock collateral
         self.balance -= collateral_needed;
@@ -200,26 +204,42 @@ impl SmartTraderAgent {
 
             println!(
                 "[SmartTrader {}] CLOSE {} (balance before return: ${:.2})",
-                self.name, 
+                self.name,
                 side_str,
                 self.balance as f64 / 1_000_000.0
             );
 
-            sim.send(
-                self.id,
-                self.exchange_id,
-                MessageType::CloseOrder,
-                payload,
-            );
+            sim.send(self.id, self.exchange_id, MessageType::CloseOrder, payload);
 
-            // Return collateral (actual PnL will come from exchange notification)
-            // For now, assume we get collateral back (exchange will notify actual result)
-            self.balance += self.collateral_in_position;
-            self.collateral_in_position = 0;
-
+            // Note: Don't update balance here - wait for OrderExecuted with actual PnL
+            // Position state will be updated when we receive OrderExecuted
             self.has_position = false;
             self.position_side = None;
             self.trades_closed += 1;
+        }
+    }
+
+    /// Handle order execution notification from exchange
+    fn handle_order_executed(&mut self, payload: &OrderExecutedPayload) {
+        match payload.order_type {
+            OrderExecutionType::Increase => {
+                // Real collateral locked (may differ from our estimate due to fees/slippage)
+                let actual_collateral = payload.collateral_delta;
+                // Adjust balance: we estimated collateral_in_position, but actual may differ
+                self.balance += self.collateral_in_position; // Return our estimate
+                self.balance -= actual_collateral;           // Deduct actual
+                self.collateral_in_position = actual_collateral;
+            }
+            OrderExecutionType::Decrease => {
+                // Position closed - return collateral and apply PnL
+                self.balance += self.collateral_in_position; // Return collateral
+                self.balance += payload.pnl;                  // Apply PnL
+                self.total_pnl += payload.pnl;
+                self.collateral_in_position = 0;
+            }
+            OrderExecutionType::Liquidation => {
+                // Liquidation handled in handle_liquidation
+            }
         }
     }
 
@@ -228,7 +248,10 @@ impl SmartTraderAgent {
         println!(
             "[SmartTrader {}] ⚠️ LIQUIDATED {} size=${:.2} pnl=${:.2} lost=${:.2}",
             self.name,
-            match payload.side { Side::Buy => "LONG", Side::Sell => "SHORT" },
+            match payload.side {
+                Side::Buy => "LONG",
+                Side::Sell => "SHORT",
+            },
             payload.size_usd as f64 / 1_000_000.0,
             payload.pnl as f64 / 1_000_000.0,
             payload.collateral_lost as f64 / 1_000_000.0
@@ -283,7 +306,7 @@ impl SmartTraderAgent {
         // With high leverage, likely to be liquidated on small price moves
         if !self.has_position && self.current_price.is_some() {
             // Randomly choose side (alternating for variety)
-            let side = if self.trades_opened % 2 == 0 {
+            let side = if self.trades_opened.is_multiple_of(2) {
                 Side::Buy
             } else {
                 Side::Sell
@@ -332,17 +355,11 @@ impl SmartTraderAgent {
                 // Open position based on momentum
                 if change_pct > *threshold_pct {
                     // Price going up -> Long
-                    println!(
-                        "[SmartTrader {}] Momentum: {:.2}% -> LONG",
-                        self.name, change_pct
-                    );
+                    println!("[SmartTrader {}] Momentum: {:.2}% -> LONG", self.name, change_pct);
                     self.open_position(sim, Side::Buy, now_ns);
                 } else if change_pct < -*threshold_pct {
                     // Price going down -> Short
-                    println!(
-                        "[SmartTrader {}] Momentum: {:.2}% -> SHORT",
-                        self.name, change_pct
-                    );
+                    println!("[SmartTrader {}] Momentum: {:.2}% -> SHORT", self.name, change_pct);
                     self.open_position(sim, Side::Sell, now_ns);
                 }
             } else {
@@ -432,6 +449,14 @@ impl Agent for SmartTraderAgent {
                     }
                 }
             }
+            // Handle order execution (for accurate balance tracking)
+            MessageType::OrderExecuted => {
+                if let MessagePayload::OrderExecuted(payload) = &msg.payload {
+                    if payload.symbol == self.symbol {
+                        self.handle_order_executed(payload);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -451,14 +476,13 @@ impl Agent for SmartTraderAgent {
 
         println!(
             "[SmartTrader {}] FINAL: strategy={}, opened={}, closed={}, liquidated={}, pnl={}, balance=${:.2}",
-            self.name, 
-            strategy_name, 
-            self.trades_opened, 
-            self.trades_closed, 
+            self.name,
+            strategy_name,
+            self.trades_opened,
+            self.trades_closed,
             self.liquidations,
             pnl_str,
             self.balance as f64 / 1_000_000.0
         );
     }
 }
-

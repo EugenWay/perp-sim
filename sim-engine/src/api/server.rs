@@ -13,7 +13,7 @@ pub struct ApiCommand {
     pub action: String,      // "open", "close", "status", "liquidations", "positions"
     pub symbol: String,
     pub side: Option<String>, // "long" or "short"
-    pub qty: Option<u64>,
+    pub qty: Option<f64>,     // Number of tokens as float (e.g., 0.5, 2.0)
     pub leverage: Option<u32>,
 }
 

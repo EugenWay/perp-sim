@@ -14,9 +14,9 @@
         "collateral_token": "USDT",
         "collateral_decimals": 6,
         "initial_liquidity": {
-          "collateral_amount": 50000000000000,
-          "index_amount": 25000000000000,
-          "liquidity_usd": 100000000000000
+          "collateral_amount": 500000000000000,
+          "index_amount": 250000000000000,
+          "liquidity_usd": 1000000000000000
         }
       }
     ]
@@ -31,76 +31,303 @@
       "wake_interval_ms": 2000
     }
   ],
-  "traders": [
-    {
-      "id": 10,
-      "name": "CyclicTrader",
-      "symbol": "ETH-USD",
-      "qty": 2,
-      "wake_interval_ms": 5000
-    }
-  ],
+  "traders": [],
   "smart_traders": [
     {
       "id": 20,
-      "name": "HodlerLong",
+      "name": "Scalp1_L",
       "symbol": "ETH-USD",
       "strategy": "hodler",
       "side": "long",
-      "leverage": 5,
-      "qty_min": 2,
-      "qty_max": 5,
-      "hold_duration_sec": 60,
-      "wake_interval_ms": 5000
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 10,
+      "wake_interval_ms": 500
     },
     {
       "id": 21,
-      "name": "HodlerShort",
+      "name": "Scalp1_S",
       "symbol": "ETH-USD",
       "strategy": "hodler",
       "side": "short",
-      "leverage": 5,
-      "qty_min": 1,
-      "qty_max": 4,
-      "hold_duration_sec": 45,
-      "wake_interval_ms": 5000
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 10,
+      "wake_interval_ms": 500
     },
     {
-      "id": 30,
-      "name": "Risky10x",
+      "id": 22,
+      "name": "Scalp2_L",
       "symbol": "ETH-USD",
-      "strategy": "risky",
-      "leverage": 10,
-      "qty_min": 3,
-      "qty_max": 8,
-      "wake_interval_ms": 8000
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 15,
+      "wake_interval_ms": 600
+    },
+    {
+      "id": 23,
+      "name": "Scalp2_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 15,
+      "wake_interval_ms": 600
+    },
+    {
+      "id": 24,
+      "name": "Scalp3_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 12,
+      "wake_interval_ms": 700
+    },
+    {
+      "id": 25,
+      "name": "Scalp3_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.1,
+      "qty_max": 0.3,
+      "hold_duration_sec": 12,
+      "wake_interval_ms": 700
+    },
+    {
+      "id": 26,
+      "name": "Scalp4_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.2,
+      "qty_max": 0.4,
+      "hold_duration_sec": 18,
+      "wake_interval_ms": 800
+    },
+    {
+      "id": 27,
+      "name": "Scalp4_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.2,
+      "qty_max": 0.4,
+      "hold_duration_sec": 18,
+      "wake_interval_ms": 800
+    },
+
+    {
+      "id": 30,
+      "name": "Day1_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 30,
+      "wake_interval_ms": 2000
     },
     {
       "id": 31,
-      "name": "Risky20x",
+      "name": "Day1_S",
       "symbol": "ETH-USD",
-      "strategy": "risky",
-      "leverage": 20,
-      "qty_min": 1,
-      "qty_max": 3,
-      "wake_interval_ms": 10000
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 30,
+      "wake_interval_ms": 2000
     },
     {
-      "id": 40,
-      "name": "TrendFollower",
+      "id": 32,
+      "name": "Day2_L",
       "symbol": "ETH-USD",
-      "strategy": "trend_follower",
-      "leverage": 5,
-      "qty_min": 2,
-      "qty_max": 6,
-      "lookback_sec": 20,
-      "threshold_pct": 0.2,
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 45,
+      "wake_interval_ms": 2500
+    },
+    {
+      "id": 33,
+      "name": "Day2_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 45,
+      "wake_interval_ms": 2500
+    },
+    {
+      "id": 34,
+      "name": "Day3_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 60,
+      "wake_interval_ms": 3000
+    },
+    {
+      "id": 35,
+      "name": "Day3_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.5,
+      "qty_max": 1.0,
+      "hold_duration_sec": 60,
+      "wake_interval_ms": 3000
+    },
+    {
+      "id": 36,
+      "name": "Day4_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.8,
+      "qty_max": 1.5,
+      "hold_duration_sec": 50,
+      "wake_interval_ms": 3500
+    },
+    {
+      "id": 37,
+      "name": "Day4_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.8,
+      "qty_max": 1.5,
+      "hold_duration_sec": 50,
+      "wake_interval_ms": 3500
+    },
+
+    {
+      "id": 40,
+      "name": "Swing1_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 1.0,
+      "qty_max": 2.0,
+      "hold_duration_sec": 90,
       "wake_interval_ms": 5000
+    },
+    {
+      "id": 41,
+      "name": "Swing1_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 1.0,
+      "qty_max": 2.0,
+      "hold_duration_sec": 90,
+      "wake_interval_ms": 5000
+    },
+    {
+      "id": 42,
+      "name": "Swing2_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 1.0,
+      "qty_max": 2.0,
+      "hold_duration_sec": 120,
+      "wake_interval_ms": 6000
+    },
+    {
+      "id": 43,
+      "name": "Swing2_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 1.0,
+      "qty_max": 2.0,
+      "hold_duration_sec": 120,
+      "wake_interval_ms": 6000
+    },
+
+    {
+      "id": 50,
+      "name": "Whale1_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 2.0,
+      "qty_max": 4.0,
+      "hold_duration_sec": 180,
+      "wake_interval_ms": 12000
+    },
+    {
+      "id": 51,
+      "name": "Whale1_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 2.0,
+      "qty_max": 4.0,
+      "hold_duration_sec": 180,
+      "wake_interval_ms": 12000
+    },
+    {
+      "id": 52,
+      "name": "Whale2_L",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 3.0,
+      "qty_max": 5.0,
+      "hold_duration_sec": 240,
+      "wake_interval_ms": 15000
+    },
+    {
+      "id": 53,
+      "name": "Whale2_S",
+      "symbol": "ETH-USD",
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 3.0,
+      "qty_max": 5.0,
+      "hold_duration_sec": 240,
+      "wake_interval_ms": 15000
     }
   ],
   "liquidation_agent": {
-    "id": 50,
+    "id": 70,
     "name": "LiquidationBot",
-    "wake_interval_ms": 200
+    "wake_interval_ms": 500
   }
 }

@@ -45,7 +45,7 @@ pub struct Price {
 pub struct LimitOrderPayload {
     pub symbol: String,
     pub side: Side,
-    pub qty: u64,
+    pub qty: f64,
     pub price: u64,
 }
 
@@ -53,7 +53,7 @@ pub struct LimitOrderPayload {
 pub struct MarketOrderPayload {
     pub symbol: String,
     pub side: Side,
-    pub qty: u64,
+    pub qty: f64,      // Number of tokens as float (e.g., 0.5 = 0.5 ETH, 2.0 = 2 ETH)
     pub leverage: u32, // 1-100x, default 5x
 }
 
@@ -86,8 +86,26 @@ pub struct PositionLiquidatedPayload {
     pub symbol: String,
     pub side: Side,
     pub size_usd: i128,
-    pub pnl: i128,           // Final PnL (negative = loss)
+    pub pnl: i128, // Final PnL (negative = loss)
     pub collateral_lost: i128,
+}
+
+/// Notification sent to trader when their order is executed
+#[derive(Debug, Clone)]
+pub struct OrderExecutedPayload {
+    pub symbol: String,
+    pub side: Side,
+    pub order_type: OrderExecutionType,
+    pub collateral_delta: i128, // + locked, - returned
+    pub pnl: i128,              // PnL on close (0 for open)
+    pub size_usd: i128,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderExecutionType {
+    Increase, // Opening/increasing position
+    Decrease, // Closing/decreasing position
+    Liquidation,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +118,7 @@ pub enum MessagePayload {
     OracleTick(OracleTickPayload),
     LiquidationTask(LiquidationTaskPayload),
     PositionLiquidated(PositionLiquidatedPayload),
+    OrderExecuted(OrderExecutedPayload),
 }
 
 /// Core message type that flows through the Kernel.
