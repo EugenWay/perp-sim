@@ -2,9 +2,9 @@ use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     human_agent::HumanAgent,
     liquidation_agent::LiquidationAgent,
+    market_maker_agent::{MarketMakerAgent, MarketMakerConfig},
     oracle_agent::OracleAgent,
     smart_trader_agent::{SmartTraderAgent, SmartTraderConfig, TradingStrategy},
-    trader_agent::TraderAgent,
 };
 use crate::api::{CachedPriceProvider, PythProvider};
 use crate::events::{EventListener, SimEvent};
@@ -75,38 +75,49 @@ struct OracleConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TraderConfig {
-    id: u32,
-    name: String,
-    symbol: String,
-    #[serde(default = "default_trader_wake_interval")]
-    wake_interval_ms: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SmartTraderJsonConfig {
     id: u32,
     name: String,
     symbol: String,
-    strategy: String, // "hodler", "risky", "trend_follower"
+    strategy: String,
     #[serde(default = "default_side")]
-    side: String, // "long" or "short" (for hodler)
+    side: String,
     #[serde(default = "default_leverage")]
     leverage: u32,
     #[serde(default = "default_qty")]
-    qty: u64, // legacy: if qty_min/qty_max not set, use this for both
+    qty: u64,
     #[serde(default)]
-    qty_min: Option<f64>, // min tokens to trade (random range)
+    qty_min: Option<f64>,
     #[serde(default)]
-    qty_max: Option<f64>, // max tokens to trade (random range)
+    qty_max: Option<f64>,
     #[serde(default = "default_hold_duration")]
-    hold_duration_sec: u64, // for hodler
+    hold_duration_sec: u64,
     #[serde(default = "default_lookback")]
-    lookback_sec: u64, // for trend_follower
+    lookback_sec: u64,
     #[serde(default = "default_threshold")]
-    threshold_pct: f64, // for trend_follower
+    threshold_pct: f64,
     #[serde(default = "default_smart_wake_interval")]
     wake_interval_ms: u64,
+    #[serde(default)]
+    take_profit_pct: Option<f64>,
+    #[serde(default)]
+    stop_loss_pct: Option<f64>,
+    #[serde(default)]
+    min_hold_sec: Option<u64>,
+    #[serde(default)]
+    max_hold_sec: Option<u64>,
+    #[serde(default)]
+    reentry_delay_sec: Option<u64>,
+    #[serde(default)]
+    lookback_periods: Option<u32>,
+    #[serde(default)]
+    entry_deviation_pct: Option<f64>,
+    #[serde(default)]
+    exit_deviation_pct: Option<f64>,
+    #[serde(default)]
+    balance: Option<i128>,
+    #[serde(default)]
+    start_delay_ms: Option<u64>,
 }
 
 fn default_side() -> String {
@@ -150,6 +161,44 @@ fn default_liquidation_wake_interval() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct MarketMakerJsonConfig {
+    id: u32,
+    name: String,
+    symbol: String,
+    #[serde(default = "default_mm_target_oi")]
+    target_oi_per_side: i128,
+    #[serde(default = "default_mm_max_imbalance")]
+    max_imbalance_pct: f64,
+    #[serde(default = "default_mm_order_size")]
+    order_size_tokens: f64,
+    #[serde(default = "default_mm_leverage")]
+    leverage: u32,
+    #[serde(default = "default_mm_wake_interval")]
+    wake_interval_ms: u64,
+    #[serde(default = "default_mm_balance")]
+    balance: i128,
+}
+
+fn default_mm_target_oi() -> i128 {
+    150_000_000_000 // $150k per side
+}
+fn default_mm_max_imbalance() -> f64 {
+    30.0
+}
+fn default_mm_order_size() -> f64 {
+    3.0
+}
+fn default_mm_leverage() -> u32 {
+    2
+}
+fn default_mm_wake_interval() -> u64 {
+    500
+}
+fn default_mm_balance() -> i128 {
+    1_000_000_000_000 // $1M
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimConfig {
     scenario_name: String,
     duration_sec: u64,
@@ -157,19 +206,15 @@ pub struct SimConfig {
     exchange: ExchangeConfig,
     oracles: Vec<OracleConfig>,
     #[serde(default)]
-    traders: Vec<TraderConfig>,
-    #[serde(default)]
     smart_traders: Vec<SmartTraderJsonConfig>,
     #[serde(default)]
     liquidation_agent: Option<LiquidationAgentConfig>,
+    #[serde(default)]
+    market_maker: Option<MarketMakerJsonConfig>,
 }
 
 fn default_wake_interval() -> u64 {
     3000
-}
-
-fn default_trader_wake_interval() -> u64 {
-    2000
 }
 
 impl SimConfig {
@@ -210,16 +255,99 @@ impl Default for SimConfig {
                 cache_duration_ms: 10000,
                 wake_interval_ms: 3000,
             }],
-            traders: vec![TraderConfig {
-                id: 3,
-                name: "Trader1".to_string(),
-                symbol: "ETH-USD".to_string(),
-                wake_interval_ms: 2000,
-            }],
             smart_traders: vec![],
             liquidation_agent: None,
+            market_maker: None,
         }
     }
+}
+
+/// Helper function to parse strategy from JSON config
+fn parse_strategy(smart_cfg: &SmartTraderJsonConfig) -> TradingStrategy {
+    let side = match smart_cfg.side.to_lowercase().as_str() {
+        "short" | "sell" => Side::Sell,
+        _ => Side::Buy,
+    };
+
+    match smart_cfg.strategy.to_lowercase().as_str() {
+        "hodler" => TradingStrategy::Hodler {
+            side,
+            hold_duration_sec: smart_cfg.hold_duration_sec,
+            leverage: smart_cfg.leverage,
+            take_profit_pct: smart_cfg.take_profit_pct,
+            stop_loss_pct: smart_cfg.stop_loss_pct,
+        },
+        "institutional" | "inst" => TradingStrategy::Institutional {
+            side,
+            leverage: smart_cfg.leverage,
+            take_profit_pct: smart_cfg.take_profit_pct.unwrap_or(3.0),
+            stop_loss_pct: smart_cfg.stop_loss_pct.unwrap_or(8.0),
+            min_hold_sec: smart_cfg.min_hold_sec.unwrap_or(60),
+            max_hold_sec: smart_cfg.max_hold_sec.unwrap_or(600),
+            reentry_delay_sec: smart_cfg.reentry_delay_sec.unwrap_or(30),
+        },
+        "trend_follower" | "trend" => TradingStrategy::TrendFollower {
+            lookback_sec: smart_cfg.lookback_sec,
+            threshold_pct: smart_cfg.threshold_pct,
+            leverage: smart_cfg.leverage,
+            take_profit_pct: smart_cfg.take_profit_pct,
+            stop_loss_pct: smart_cfg.stop_loss_pct,
+        },
+        "mean_reversion" | "meanrev" | "mr" => TradingStrategy::MeanReversion {
+            lookback_periods: smart_cfg.lookback_periods.unwrap_or(20),
+            entry_deviation_pct: smart_cfg.entry_deviation_pct.unwrap_or(1.0),
+            exit_deviation_pct: smart_cfg.exit_deviation_pct.unwrap_or(0.2),
+            leverage: smart_cfg.leverage,
+            max_hold_sec: smart_cfg.max_hold_sec.unwrap_or(300),
+        },
+        "arbitrageur" | "arb" => TradingStrategy::Arbitrageur {
+            min_imbalance_pct: smart_cfg.entry_deviation_pct.unwrap_or(5.0), // reuse field
+            leverage: smart_cfg.leverage,
+            hold_duration_sec: smart_cfg.hold_duration_sec,
+            take_profit_pct: smart_cfg.take_profit_pct,
+            stop_loss_pct: smart_cfg.stop_loss_pct,
+        },
+        "funding_harvester" | "funding" | "fh" => TradingStrategy::FundingHarvester {
+            min_imbalance_pct: smart_cfg.entry_deviation_pct.unwrap_or(3.0),
+            leverage: smart_cfg.leverage,
+            min_hold_sec: smart_cfg.min_hold_sec.unwrap_or(60),
+            max_hold_sec: smart_cfg.max_hold_sec.unwrap_or(600),
+            exit_imbalance_pct: smart_cfg.exit_deviation_pct.unwrap_or(5.0),
+            stop_loss_pct: smart_cfg.stop_loss_pct.unwrap_or(10.0),
+        },
+        _ => {
+            eprintln!("[Scenario] Unknown strategy: {}, using Hodler", smart_cfg.strategy);
+            TradingStrategy::Hodler {
+                side,
+                hold_duration_sec: smart_cfg.hold_duration_sec,
+                leverage: smart_cfg.leverage,
+                take_profit_pct: None,
+                stop_loss_pct: None,
+            }
+        }
+    }
+}
+
+/// Helper function to create SmartTraderAgent from JSON config
+fn create_smart_trader(smart_cfg: &SmartTraderJsonConfig, exchange_id: u32) -> SmartTraderAgent {
+    let strategy = parse_strategy(smart_cfg);
+
+    let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty as f64);
+    let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty as f64);
+
+    let smart_config = SmartTraderConfig {
+        name: smart_cfg.name.clone(),
+        exchange_id,
+        symbol: smart_cfg.symbol.clone(),
+        strategy,
+        qty_min,
+        qty_max,
+        wake_interval_ms: smart_cfg.wake_interval_ms,
+        balance: smart_cfg.balance,
+        start_delay_ms: smart_cfg.start_delay_ms,
+    };
+
+    SmartTraderAgent::new(smart_cfg.id, smart_config)
 }
 
 /// Run a simulation with given configuration
@@ -228,7 +356,6 @@ fn run_with_config(config: SimConfig) {
     println!("[Scenario] Duration: {}s", config.duration_sec);
     println!("[Scenario] Markets: {}", config.exchange.markets.len());
     println!("[Scenario] Oracles: {}", config.oracles.len());
-    println!("[Scenario] Traders: {}", config.traders.len());
     println!("[Scenario] SmartTraders: {}", config.smart_traders.len());
 
     let max_ticks = (config.duration_sec * 1000 / 100) as usize;
@@ -350,61 +477,30 @@ fn run_with_config(config: SimConfig) {
         )));
     }
 
-    for trader_cfg in &config.traders {
-        engine.kernel.add_agent(Box::new(TraderAgent::new(
-            trader_cfg.id,
-            trader_cfg.name.clone(),
-            config.exchange.id,
-            trader_cfg.symbol.clone(),
-        )));
-    }
-
-    // Create smart traders
-    for smart_cfg in &config.smart_traders {
-        let side = match smart_cfg.side.to_lowercase().as_str() {
-            "short" | "sell" => Side::Sell,
-            _ => Side::Buy,
-        };
-
-        let strategy = match smart_cfg.strategy.to_lowercase().as_str() {
-            "hodler" => TradingStrategy::Hodler {
-                side,
-                hold_duration_sec: smart_cfg.hold_duration_sec,
-                leverage: smart_cfg.leverage,
-            },
-            "risky" => TradingStrategy::Risky {
-                leverage: smart_cfg.leverage,
-            },
-            "trend_follower" | "trend" => TradingStrategy::TrendFollower {
-                lookback_sec: smart_cfg.lookback_sec,
-                threshold_pct: smart_cfg.threshold_pct,
-                leverage: smart_cfg.leverage,
-            },
-            _ => {
-                eprintln!("[Scenario] Unknown strategy: {}, using Risky", smart_cfg.strategy);
-                TradingStrategy::Risky {
-                    leverage: smart_cfg.leverage,
-                }
-            }
-        };
-
-        // Support both legacy qty and new qty_min/qty_max
-        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty as f64);
-        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty as f64);
-
-        let smart_config = SmartTraderConfig {
-            name: smart_cfg.name.clone(),
+    // Add Market Maker if configured (MUST be added BEFORE other traders for seed liquidity)
+    if let Some(mm_cfg) = &config.market_maker {
+        let mm_config = MarketMakerConfig {
+            name: mm_cfg.name.clone(),
             exchange_id: config.exchange.id,
-            symbol: smart_cfg.symbol.clone(),
-            strategy,
-            qty_min,
-            qty_max,
-            wake_interval_ms: smart_cfg.wake_interval_ms,
+            symbol: mm_cfg.symbol.clone(),
+            target_oi_per_side: mm_cfg.target_oi_per_side,
+            max_imbalance_pct: mm_cfg.max_imbalance_pct,
+            order_size_tokens: mm_cfg.order_size_tokens,
+            leverage: mm_cfg.leverage,
+            wake_interval_ms: mm_cfg.wake_interval_ms,
+            balance: mm_cfg.balance,
         };
-
         engine
             .kernel
-            .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
+            .add_agent(Box::new(MarketMakerAgent::new(mm_cfg.id, mm_config)));
+        println!("[Scenario] Added MarketMaker: {}", mm_cfg.name);
+    }
+
+    // Create smart traders using shared helper
+    for smart_cfg in &config.smart_traders {
+        engine
+            .kernel
+            .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
     }
 
     // Add liquidation agent if configured
@@ -533,11 +629,6 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
             .subscribe(Box::new(ClosureListener { closure: listener }));
     }
 
-    // We need to split responses to both HTTP and WS?
-    // HumanAgent has only one response_tx.
-    // Solution: Create a "Splitter" channel?
-    // Or simpler: HumanAgent sends to a channel, and we have a thread that forwards to both HTTP and WS response channels.
-
     let (human_response_tx, human_response_rx) = crossbeam_channel::unbounded::<crate::api::ApiResponse>();
 
     // Response forwarder thread
@@ -589,59 +680,30 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         )));
     }
 
-    // Add regular traders from scenario
-    for trader_cfg in &config.traders {
-        engine.kernel.add_agent(Box::new(TraderAgent::new(
-            trader_cfg.id,
-            trader_cfg.name.clone(),
-            config.exchange.id,
-            trader_cfg.symbol.clone(),
-        )));
-    }
-
-    // Add smart traders from scenario
-    for smart_cfg in &config.smart_traders {
-        let side = match smart_cfg.side.to_lowercase().as_str() {
-            "short" | "sell" => Side::Sell,
-            _ => Side::Buy,
-        };
-
-        let strategy = match smart_cfg.strategy.to_lowercase().as_str() {
-            "hodler" => TradingStrategy::Hodler {
-                side,
-                hold_duration_sec: smart_cfg.hold_duration_sec,
-                leverage: smart_cfg.leverage,
-            },
-            "risky" => TradingStrategy::Risky {
-                leverage: smart_cfg.leverage,
-            },
-            "trend_follower" | "trend" => TradingStrategy::TrendFollower {
-                lookback_sec: smart_cfg.lookback_sec,
-                threshold_pct: smart_cfg.threshold_pct,
-                leverage: smart_cfg.leverage,
-            },
-            _ => TradingStrategy::Risky {
-                leverage: smart_cfg.leverage,
-            },
-        };
-
-        // Support both legacy qty and new qty_min/qty_max
-        let qty_min = smart_cfg.qty_min.unwrap_or(smart_cfg.qty as f64);
-        let qty_max = smart_cfg.qty_max.unwrap_or(smart_cfg.qty as f64);
-
-        let smart_config = SmartTraderConfig {
-            name: smart_cfg.name.clone(),
+    // Add Market Maker if configured (MUST be added BEFORE other traders for seed liquidity)
+    if let Some(mm_cfg) = &config.market_maker {
+        let mm_config = MarketMakerConfig {
+            name: mm_cfg.name.clone(),
             exchange_id: config.exchange.id,
-            symbol: smart_cfg.symbol.clone(),
-            strategy,
-            qty_min,
-            qty_max,
-            wake_interval_ms: smart_cfg.wake_interval_ms,
+            symbol: mm_cfg.symbol.clone(),
+            target_oi_per_side: mm_cfg.target_oi_per_side,
+            max_imbalance_pct: mm_cfg.max_imbalance_pct,
+            order_size_tokens: mm_cfg.order_size_tokens,
+            leverage: mm_cfg.leverage,
+            wake_interval_ms: mm_cfg.wake_interval_ms,
+            balance: mm_cfg.balance,
         };
-
         engine
             .kernel
-            .add_agent(Box::new(SmartTraderAgent::new(smart_cfg.id, smart_config)));
+            .add_agent(Box::new(MarketMakerAgent::new(mm_cfg.id, mm_config)));
+        println!("[Scenario] Added MarketMaker: {}", mm_cfg.name);
+    }
+
+    // Add smart traders from scenario using shared helper
+    for smart_cfg in &config.smart_traders {
+        engine
+            .kernel
+            .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
     }
 
     // Add liquidation agent if configured
@@ -668,9 +730,13 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
     println!();
     println!("=== REALTIME MODE ===");
     println!(
-        "Agents: {} traders + {} smart_traders + HumanAgent{}",
-        config.traders.len(),
+        "Agents: {} smart_traders + HumanAgent{}{}",
         config.smart_traders.len(),
+        if config.market_maker.is_some() {
+            " + MarketMaker"
+        } else {
+            ""
+        },
         if config.liquidation_agent.is_some() {
             " + LiquidationAgent"
         } else {
