@@ -8,6 +8,7 @@ import {
   PositionSnapshot,
   MarketSnapshot,
   OrderExecuted,
+  PositionLiquidated,
   AGENT_NAMES,
   formatUsd,
   formatPrice,
@@ -64,6 +65,8 @@ function App() {
   const [traderLogs, setTraderLogs] = useState<LogEntry[]>([]);
   const [exchangeLogs, setExchangeLogs] = useState<LogEntry[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [liqCount, setLiqCount] = useState(0);
+  const [liqFlash, setLiqFlash] = useState(false);
 
   // Trading form state
   const [selectedSymbol, setSelectedSymbol] = useState('ETH-USD');
@@ -175,6 +178,26 @@ function App() {
         }
 
         addExchangeLog(`✅ ${agentName} ${side} ${sizeStr}`, 'exchange');
+        break;
+      }
+
+      case 'PositionLiquidated': {
+        const e = event as PositionLiquidated;
+        const agentName = AGENT_NAMES[e.account] || `Agent#${e.account}`;
+        const side = e.side === 'buy' ? 'LONG' : 'SHORT';
+        const sizeStr = formatUsd(e.size_usd);
+        const pnlStr = formatUsd(e.pnl);
+        const liqPriceStr = formatPrice(e.liquidation_price);
+
+        setLiqCount((prev) => prev + 1);
+        setLiqFlash(true);
+        setTimeout(() => setLiqFlash(false), 600);
+
+        addExchangeLog(`💥 LIQUIDATION ${agentName} ${side} ${sizeStr} @ ${liqPriceStr} (PnL ${pnlStr})`, 'error');
+
+        if (e.account === HUMAN_AGENT_ID) {
+          addToast('error', '💥 Liquidated', `${side} ${sizeStr} @ ${liqPriceStr}`);
+        }
         break;
       }
 
@@ -374,7 +397,15 @@ function App() {
               <div className="toast-title">{toast.title}</div>
               <div className="toast-message">{toast.message}</div>
             </div>
-            <button className="toast-close" onClick={() => removeToast(toast.id)}>
+            <button
+              className="toast-close"
+              type="button"
+              aria-label="Close notification"
+              onClick={(event) => {
+                event.stopPropagation();
+                removeToast(toast.id);
+              }}
+            >
               ×
             </button>
           </div>
@@ -439,6 +470,8 @@ function App() {
               </div>
             </div>
           ))}
+
+          <div className={`liq-indicator ${liqFlash ? 'on' : ''}`}>💥 Liquidations: {liqCount}</div>
 
           <div className="log-container">
             {exchangeLogs.map((log) => (

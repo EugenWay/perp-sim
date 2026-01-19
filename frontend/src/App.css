@@ -121,6 +121,22 @@ body {
   min-height: 300px;
 }
 
+.liq-indicator {
+  margin: 10px 0 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #2b0b0b;
+  color: #ffb3b3;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.liq-indicator.on {
+  background: #ff2d2d;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 45, 45, 0.8);
+}
+
 .log-entry {
   font-size: 12px;
   padding: 6px 8px;
@@ -592,6 +608,7 @@ body {
   border: 1px solid var(--border-color);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   animation: toast-slide-in 0.3s ease-out;
+  pointer-events: auto;
 }
 
 @keyframes toast-slide-in {
@@ -630,6 +647,7 @@ body {
   padding: 0;
   line-height: 1;
   transition: color 0.15s;
+  pointer-events: auto;
 }
 
 .toast-close:hover {
