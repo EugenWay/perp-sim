@@ -21,6 +21,7 @@ pub enum MessageType {
     LiquidationScan,
     LiquidationExecute,
     PositionLiquidated, // Notify trader their position was liquidated
+    MarketState,        // Broadcast OI and liquidity data
 }
 
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,15 @@ pub struct OracleTickPayload {
     pub signature: Vec<u8>, // VAA signature from oracle provider (e.g., Pyth Network)
 }
 
+/// Market state snapshot for trader logic (OI + liquidity in micro-USD)
+#[derive(Debug, Clone)]
+pub struct MarketStatePayload {
+    pub symbol: String,
+    pub oi_long_usd: i128,
+    pub oi_short_usd: i128,
+    pub liquidity_usd: i128,
+}
+
 #[derive(Debug, Clone)]
 pub struct LiquidationTaskPayload {
     pub symbol: String,
@@ -119,6 +129,7 @@ pub enum MessagePayload {
     LiquidationTask(LiquidationTaskPayload),
     PositionLiquidated(PositionLiquidatedPayload),
     OrderExecuted(OrderExecutedPayload),
+    MarketState(MarketStatePayload),
 }
 
 /// Core message type that flows through the Kernel.
