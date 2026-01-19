@@ -86,7 +86,10 @@ impl Agent for LiquidationAgent {
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
         // Liquidation agent doesn't need to handle messages currently
         // Could be extended to receive liquidation results from exchange
-        if msg.msg_type != MessageType::Wakeup {
+        if msg.msg_type != MessageType::Wakeup
+            && msg.msg_type != MessageType::OracleTick
+            && msg.msg_type != MessageType::MarketState
+        {
             println!(
                 "[Liquidation {}] received unexpected msg {:?} from {}",
                 self.name, msg.msg_type, msg.from

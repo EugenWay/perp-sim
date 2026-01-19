@@ -69,10 +69,7 @@ impl Agent for OracleAgent {
         let verbose = self.block_number <= 3 || self.block_number.is_multiple_of(10);
 
         if verbose {
-        println!(
-                "[Oracle {}] BLOCK #{} at t={} ns",
-            self.name, self.block_number, now_ns
-        );
+            println!("[Oracle {}] BLOCK #{} at t={} ns", self.name, self.block_number, now_ns);
         }
 
         let symbol_refs: Vec<&str> = self.symbols.iter().map(|s| s.as_str()).collect();
@@ -110,10 +107,12 @@ impl Agent for OracleAgent {
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
-        println!(
-            "[Oracle {}] received msg {:?} from {}",
-            self.name, msg.msg_type, msg.from
-        );
+        if msg.msg_type != MessageType::MarketState {
+            println!(
+                "[Oracle {}] received msg {:?} from {}",
+                self.name, msg.msg_type, msg.from
+            );
+        }
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {

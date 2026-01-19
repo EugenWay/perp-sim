@@ -1,9 +1,9 @@
 use crate::agents::Agent;
 use crate::events::SimEvent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload,
-    Side as SimSide, SimulatorApi,
+    AgentId, CloseOrderPayload, MarketOrderPayload, MarketStatePayload, Message, MessagePayload, MessageType,
+    OracleTickPayload, OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, Side as SimSide,
+    SimulatorApi,
 };
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
@@ -298,6 +298,38 @@ impl ExchangeAgent {
         }
     }
 
+    /// Broadcast MarketState to all agents (for OI-based strategies)
+    fn broadcast_market_state(&self, sim: &mut dyn SimulatorApi) {
+        for market_cfg in &self.markets {
+            let market_id = MarketId(market_cfg.id);
+            if let Some(market) = self.executor.state.markets.get(&market_id) {
+                let payload = MessagePayload::MarketState(MarketStatePayload {
+                    symbol: market_cfg.symbol.clone(),
+                    oi_long_usd: usd_to_micro(market.oi_long_usd) as i128,
+                    oi_short_usd: usd_to_micro(market.oi_short_usd) as i128,
+                    liquidity_usd: usd_to_micro(market.liquidity_usd) as i128,
+                });
+                sim.broadcast(self.id, MessageType::MarketState, payload);
+            }
+        }
+    }
+
+    /// Emit market snapshots only (OI/liquidity) for UI updates
+    fn emit_market_snapshots_only(&self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+        for market_cfg in &self.markets {
+            let market_id = MarketId(market_cfg.id);
+            if let Some(market) = self.executor.state.markets.get(&market_id) {
+                sim.emit_event(SimEvent::MarketSnapshot {
+                    ts: now_ns,
+                    symbol: market_cfg.symbol.clone(),
+                    oi_long_usd: usd_to_micro(market.oi_long_usd),
+                    oi_short_usd: usd_to_micro(market.oi_short_usd),
+                    liquidity_usd: usd_to_micro(market.liquidity_usd),
+                });
+            }
+        }
+    }
+
     /// Emit snapshots for all positions and market state
     /// Called on each oracle tick to track PnL evolution
     /// Returns list of (agent_id, symbol, side) for liquidatable positions
@@ -379,8 +411,13 @@ impl ExchangeAgent {
                 opened_at_sec: position.opened_at,
             });
 
-            // Collect liquidatable positions
-            if liquidatable && agent_id != 0 {
+            // Collect liquidatable positions (with grace period)
+            // Grace period: don't liquidate positions opened less than 10 seconds ago
+            const LIQUIDATION_GRACE_PERIOD_SEC: u64 = 10;
+            let position_age_sec = now_sec.saturating_sub(position.opened_at);
+            let past_grace_period = position_age_sec >= LIQUIDATION_GRACE_PERIOD_SEC;
+
+            if liquidatable && agent_id != 0 && past_grace_period {
                 to_liquidate.push((agent_id, symbol.clone(), key.side));
                 println!(
                     "[Exchange {}] ⚠️ LIQUIDATABLE: {} {:?} agent={} size=${:.2} pnl=${:.2}",
@@ -391,22 +428,20 @@ impl ExchangeAgent {
                     size_usd_micro as f64 / 1_000_000.0,
                     pnl_micro as f64 / 1_000_000.0,
                 );
+            } else if liquidatable && agent_id != 0 && !past_grace_period {
+                println!(
+                    "[Exchange {}] ⏳ GRACE PERIOD: {} {:?} agent={} ({}s remaining)",
+                    self.name,
+                    symbol,
+                    key.side,
+                    agent_id,
+                    LIQUIDATION_GRACE_PERIOD_SEC - position_age_sec,
+                );
             }
         }
 
         // Emit market snapshots
-        for market_cfg in &self.markets {
-            let market_id = MarketId(market_cfg.id);
-            if let Some(market) = self.executor.state.markets.get(&market_id) {
-                sim.emit_event(SimEvent::MarketSnapshot {
-                    ts: now_ns,
-                    symbol: market_cfg.symbol.clone(),
-                    oi_long_usd: usd_to_micro(market.oi_long_usd),
-                    oi_short_usd: usd_to_micro(market.oi_short_usd),
-                    liquidity_usd: usd_to_micro(market.liquidity_usd),
-                });
-            }
-        }
+        self.emit_market_snapshots_only(sim, now_ns);
 
         to_liquidate
     }
@@ -625,6 +660,11 @@ impl ExchangeAgent {
                 // Send notification to trader
                 self.notify_liquidation(sim, agent_id, symbol, side, size_usd_micro, pnl_micro, collateral_micro);
 
+                // Emit fresh market snapshot for UI updates
+                self.emit_market_snapshots_only(sim, now_ns);
+                // Broadcast updated market state after liquidation
+                self.broadcast_market_state(sim);
+
                 Ok(())
             }
             Err(e) => {
@@ -680,8 +720,11 @@ impl ExchangeAgent {
 
         let mut to_liquidate = Vec::new();
 
+        // Grace period: don't liquidate positions opened less than 10 seconds ago
+        const LIQUIDATION_GRACE_PERIOD_SEC: u64 = 10;
+
         // Check all positions using engine API
-        for (key, _position) in self.executor.state.positions.iter() {
+        for (key, position) in self.executor.state.positions.iter() {
             // Find symbol for this market
             let symbol = self
                 .symbol_to_market
@@ -689,6 +732,12 @@ impl ExchangeAgent {
                 .find(|(_, (mid, _))| *mid == key.market_id)
                 .map(|(s, _)| s.clone())
                 .unwrap_or_else(|| format!("UNKNOWN-{:?}", key.market_id));
+
+            // Check grace period
+            let position_age_sec = now_sec.saturating_sub(position.opened_at);
+            if position_age_sec < LIQUIDATION_GRACE_PERIOD_SEC {
+                continue; // Skip - still in grace period
+            }
 
             // Use engine API to check if liquidatable
             let liquidatable = match self.executor.is_liquidatable_by_margin(now_sec, *key) {
@@ -755,14 +804,16 @@ impl ExchangeAgent {
         let pnl_micro = match self.executor.is_liquidatable_by_margin(now, position_key) {
             Ok(preview) => {
                 let pnl = pnl_to_micro_usd(preview.pnl_usd);
-                println!("[Exchange {}] CLOSE PnL preview: is_neg={} pnl_micro={}", 
-                    self.name, preview.pnl_usd.is_negative, pnl);
+                println!(
+                    "[Exchange {}] CLOSE PnL preview: is_neg={} pnl_micro={}",
+                    self.name, preview.pnl_usd.is_negative, pnl
+                );
                 pnl
-            },
+            }
             Err(e) => {
                 println!("[Exchange {}] CLOSE PnL error: {:?}", self.name, e);
                 0
-            },
+            }
         };
 
         // Create decrease order for full position size
@@ -820,8 +871,11 @@ impl ExchangeAgent {
                     order_type: "Decrease".to_string(),
                     pnl: pnl_micro,
                 });
-                
-                println!("[Exchange {}] Emitted OrderExecuted from={} pnl={}", self.name, from, pnl_micro);
+
+                println!(
+                    "[Exchange {}] Emitted OrderExecuted from={} pnl={}",
+                    self.name, from, pnl_micro
+                );
 
                 // Send message to agent with execution details
                 // On close: collateral is returned (negative delta), include PnL
@@ -855,6 +909,11 @@ impl ExchangeAgent {
                         usd_to_micro(market.oi_short_usd) as f64 / 1_000_000.0
                     );
                 }
+
+                // Emit fresh market snapshot for UI updates
+                self.emit_market_snapshots_only(sim, now_ns);
+                // Broadcast updated market state after close
+                self.broadcast_market_state(sim);
             }
             Err(e) => {
                 println!(
@@ -1013,6 +1072,11 @@ impl ExchangeAgent {
                         usd_to_micro(market.oi_short_usd) as f64 / 1_000_000.0
                     );
                 }
+
+                // Emit fresh market snapshot for UI updates
+                self.emit_market_snapshots_only(sim, now_ns);
+                // Broadcast updated market state after open
+                self.broadcast_market_state(sim);
             }
             Err(e) => {
                 println!(
@@ -1081,6 +1145,9 @@ impl Agent for ExchangeAgent {
                         let now_ns = sim.now_ns();
                         let _liquidatable = self.emit_snapshots(sim, now_ns);
                         // Note: Liquidations are executed by LiquidationAgent via LiquidationScan
+
+                        // Broadcast market state on each oracle tick for OI-based strategies
+                        self.broadcast_market_state(sim);
                     }
                 }
             }
