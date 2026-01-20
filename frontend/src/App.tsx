@@ -253,6 +253,9 @@ function App() {
       ws.onclose = () => {
         if (!isMounted) return;
         setConnected(false);
+        localStorage.removeItem(STORAGE_KEY);
+        setHumanPositions([]);
+        setHumanBalance(INITIAL_BALANCE);
         addExchangeLog('🔴 Disconnected', 'error');
         addToast('warning', '🔴 Disconnected', 'Reconnecting in 2s...');
         // Reconnect after 2 seconds
