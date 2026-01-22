@@ -5,8 +5,10 @@ mod kernel;
 mod latency;
 mod logging;
 mod messages;
+mod pending_orders;
 pub mod scenarios;
 mod sim_engine;
+mod trigger_checker;
 
 use clap::Parser;
 
