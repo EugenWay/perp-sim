@@ -2,11 +2,15 @@ use crate::messages::{AgentId, Message, SimulatorApi};
 
 pub mod exchange_agent;
 pub mod human_agent;
+pub mod keeper_agent;
+pub mod limit_trader_agent;
 pub mod liquidation_agent;
 pub mod market_maker_agent;
 pub mod oracle_agent;
 pub mod smart_trader_agent;
 
+pub use keeper_agent::{KeeperAgent, KeeperConfig};
+pub use limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy};
 pub use market_maker_agent::{MarketMakerAgent, MarketMakerConfig};
 
 pub trait Agent {
