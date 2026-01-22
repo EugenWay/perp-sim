@@ -1,10 +1,14 @@
 use crate::agents::Agent;
 use crate::events::SimEvent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, MarketOrderPayload, MarketStatePayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, Side as SimSide,
-    SimulatorApi,
+    AgentId, CloseOrderPayload, ExecutionType, KeeperRewardPayload, MarketOrderPayload,
+    MarketStatePayload, Message, MessagePayload, MessageType, OrderId, OrderPayload,
+    OrderType as SimOrderType, OracleTickPayload, OrderExecutedPayload, OrderExecutionType,
+    PendingOrderInfo, PendingOrdersListPayload, PositionLiquidatedPayload, Price,
+    Side as SimSide, SimulatorApi,
 };
+use crate::pending_orders::{PendingOrder, PendingOrderStore};
+use crate::trigger_checker;
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
 use perp_futures::services::BasicServicesBundle;
@@ -186,12 +190,11 @@ pub struct ExchangeAgent {
     accounts: HashMap<AgentId, AccountId>,
     next_account_idx: u32,
 
-    /// Maps symbol -> (market_id, collateral_asset)
     symbol_to_market: HashMap<String, (MarketId, AssetId)>,
-    /// Maps symbol -> (index_decimals, collateral_decimals)
-    /// Reserved for future use (e.g., proper decimal handling in calculations)
     #[allow(dead_code)]
     symbol_decimals: HashMap<String, (u32, u32)>,
+    
+    pending_orders: PendingOrderStore,
 }
 
 impl ExchangeAgent {
@@ -271,6 +274,7 @@ impl ExchangeAgent {
             next_account_idx: 0,
             symbol_to_market,
             symbol_decimals,
+            pending_orders: PendingOrderStore::new(),
         }
     }
 
@@ -757,6 +761,237 @@ impl ExchangeAgent {
         to_liquidate
     }
 
+    fn validate_order(&self, order: &OrderPayload) -> Result<(), String> {
+        if !self.symbol_to_market.contains_key(&order.symbol) {
+            return Err(format!("unknown symbol: {}", order.symbol));
+        }
+        
+        match order.execution_type {
+            ExecutionType::Market => {}
+            ExecutionType::Limit | ExecutionType::StopLoss | ExecutionType::TakeProfit => {
+                if order.trigger_price.is_none() {
+                    return Err("trigger_price required for conditional orders".into());
+                }
+            }
+        }
+        
+        match order.order_type {
+            SimOrderType::Increase => {
+                if order.qty.is_none() || order.qty.unwrap() <= 0.0 {
+                    return Err("qty required for Increase".into());
+                }
+            }
+            SimOrderType::Decrease => {}
+        }
+        
+        // SL/TP only for Decrease
+        if matches!(order.execution_type, ExecutionType::StopLoss | ExecutionType::TakeProfit) 
+            && order.order_type != SimOrderType::Decrease 
+        {
+            return Err("StopLoss/TakeProfit only valid for Decrease orders".into());
+        }
+        
+        Ok(())
+    }
+
+    fn process_submit_order(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        from: AgentId,
+        order: &OrderPayload,
+        now_ns: u64,
+    ) {
+        if let Err(e) = self.validate_order(order) {
+            println!("[Exchange {}] REJECTED from {}: {}", self.name, from, e);
+            return;
+        }
+
+        // Market orders execute immediately
+        if order.execution_type == ExecutionType::Market {
+            match order.order_type {
+                SimOrderType::Increase => {
+                    let market_order = MarketOrderPayload {
+                        symbol: order.symbol.clone(),
+                        side: order.side,
+                        qty: order.qty.unwrap_or(0.0),
+                        leverage: order.leverage.unwrap_or(5),
+                    };
+                    self.process_market_order(sim, from, &market_order, now_ns);
+                }
+                SimOrderType::Decrease => {
+                    let close_order = CloseOrderPayload {
+                        symbol: order.symbol.clone(),
+                        side: order.side,
+                    };
+                    self.process_close_order(sim, from, &close_order, now_ns);
+                }
+            }
+            return;
+        }
+
+        // Add to pending orders
+        let order_id = self.pending_orders.insert(from, order.clone(), now_ns);
+
+        println!(
+            "[Exchange {}] PENDING #{} from={} {:?} {:?} trigger=${:.2}",
+            self.name,
+            order_id,
+            from,
+            order.execution_type,
+            order.side,
+            order.trigger_price.unwrap_or(0) as f64 / 1_000_000.0
+        );
+
+        sim.send(
+            self.id,
+            from,
+            MessageType::OrderPending,
+            MessagePayload::Text(format!("order_id:{}", order_id)),
+        );
+    }
+
+    fn process_cancel_order(&mut self, _sim: &mut dyn SimulatorApi, from: AgentId, order_id: OrderId) {
+        if let Some(order) = self.pending_orders.get(order_id) {
+            if order.owner != from {
+                println!("[Exchange {}] CANCEL REJECTED: not owner", self.name);
+                return;
+            }
+        }
+
+        if let Some(_removed) = self.pending_orders.remove(order_id) {
+            println!("[Exchange {}] CANCELLED #{} from={}", self.name, order_id, from);
+        }
+    }
+
+    fn execute_triggered_order(&mut self, sim: &mut dyn SimulatorApi, order: &PendingOrder, now_ns: u64) {
+        match order.payload.order_type {
+            SimOrderType::Increase => {
+                let market_order = MarketOrderPayload {
+                    symbol: order.payload.symbol.clone(),
+                    side: order.payload.side,
+                    qty: order.payload.qty.unwrap_or(0.0),
+                    leverage: order.payload.leverage.unwrap_or(5),
+                };
+                self.process_market_order(sim, order.owner, &market_order, now_ns);
+            }
+            SimOrderType::Decrease => {
+                let close_order = CloseOrderPayload {
+                    symbol: order.payload.symbol.clone(),
+                    side: order.payload.side,
+                };
+                self.process_close_order(sim, order.owner, &close_order, now_ns);
+            }
+        }
+    }
+
+    fn cleanup_expired_orders(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+        let expired = self.pending_orders.remove_expired(now_ns);
+        for order in expired {
+            println!("[Exchange {}] EXPIRED #{}", self.name, order.id);
+            sim.send(
+                self.id,
+                order.owner,
+                MessageType::OrderCancelled,
+                MessagePayload::Text(format!("order_id:{},reason:expired", order.id)),
+            );
+        }
+    }
+
+    fn handle_get_pending_orders(&self, sim: &mut dyn SimulatorApi, keeper_id: AgentId) {
+        let mut orders_info = Vec::new();
+
+        for market_cfg in &self.markets {
+            let symbol = &market_cfg.symbol;
+            for order in self.pending_orders.get_by_symbol(symbol) {
+                if let Some(trigger_price) = order.payload.trigger_price {
+                    orders_info.push(PendingOrderInfo {
+                        order_id: order.id,
+                        symbol: order.payload.symbol.clone(),
+                        side: order.payload.side,
+                        order_type: order.payload.order_type,
+                        execution_type: order.payload.execution_type,
+                        trigger_price,
+                        owner: order.owner,
+                    });
+                }
+            }
+        }
+
+        sim.send(
+            self.id,
+            keeper_id,
+            MessageType::PendingOrdersList,
+            MessagePayload::PendingOrdersList(PendingOrdersListPayload { orders: orders_info }),
+        );
+    }
+
+    fn handle_execute_order_from_keeper(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        keeper_id: AgentId,
+        order_id: OrderId,
+        now_ns: u64,
+    ) {
+        // 1. Check order exists
+        let order = match self.pending_orders.get(order_id) {
+            Some(o) => o.clone(),
+            None => {
+                sim.send(
+                    self.id,
+                    keeper_id,
+                    MessageType::OrderAlreadyExecuted,
+                    MessagePayload::Text(format!("order_id:{}", order_id)),
+                );
+                return;
+            }
+        };
+
+        // 2. Verify trigger still valid
+        let symbol = &order.payload.symbol;
+        let price = match self.last_prices.get(symbol) {
+            Some(&mid) => Price { min: mid, max: mid },
+            None => {
+                println!("[Exchange {}] ExecuteOrder rejected: no price for {}", self.name, symbol);
+                return;
+            }
+        };
+
+        if !trigger_checker::is_triggered(&order, &price) {
+            println!(
+                "[Exchange {}] ExecuteOrder rejected: trigger not satisfied for #{}",
+                self.name, order_id
+            );
+            return;
+        }
+
+        // 3. Remove and execute
+        if let Some(removed_order) = self.pending_orders.remove(order_id) {
+            println!(
+                "[Exchange {}] KEEPER {} EXECUTES #{} {:?} {:?}",
+                self.name, keeper_id, order_id,
+                removed_order.payload.execution_type,
+                removed_order.payload.side
+            );
+
+            self.execute_triggered_order(sim, &removed_order, now_ns);
+
+            // 4. Send reward (0.1% of size)
+            let size_micro = removed_order.payload.qty.unwrap_or(0.0)
+                * self.last_prices.get(symbol).copied().unwrap_or(0) as f64;
+            let reward = (size_micro as u64 * 10) / 10000; // 0.1% = 10 bps
+
+            sim.send(
+                self.id,
+                keeper_id,
+                MessageType::KeeperReward,
+                MessagePayload::KeeperReward(KeeperRewardPayload {
+                    order_id,
+                    reward_micro_usd: reward,
+                }),
+            );
+        }
+    }
+
     fn process_close_order(
         &mut self,
         sim: &mut dyn SimulatorApi,
@@ -1131,23 +1366,17 @@ impl Agent for ExchangeAgent {
                     signature: _,
                 }) = &msg.payload
                 {
-                    // Check if this symbol is one of our markets
                     if self.symbol_to_market.contains_key(symbol) {
-                        // Update price cache (normalizes to USD(1e30) per atom internally)
                         self.price_cache.borrow_mut().update(symbol, price.min, price.max);
-
-                        // Store mid-price in micro-USD for display purposes
                         let mid_price = (price.min + price.max) / 2;
                         self.last_prices.insert(symbol.clone(), mid_price);
 
-                        // Emit position and market snapshots on each price update
-                        // This also identifies liquidatable positions (logged but not executed here)
                         let now_ns = sim.now_ns();
                         let _liquidatable = self.emit_snapshots(sim, now_ns);
-                        // Note: Liquidations are executed by LiquidationAgent via LiquidationScan
-
-                        // Broadcast market state on each oracle tick for OI-based strategies
                         self.broadcast_market_state(sim);
+                        
+                        // Keeper'ы сами проверяют триггеры, тут только cleanup
+                        self.cleanup_expired_orders(sim, now_ns);
                     }
                 }
             }
@@ -1166,17 +1395,40 @@ impl Agent for ExchangeAgent {
                 }
             }
 
+            MessageType::SubmitOrder => {
+                if let MessagePayload::Order(order) = &msg.payload {
+                    let now_ns = sim.now_ns();
+                    self.process_submit_order(sim, msg.from, order, now_ns);
+                }
+            }
+
+            MessageType::CancelOrder => {
+                if let MessagePayload::CancelOrder(payload) = &msg.payload {
+                    self.process_cancel_order(sim, msg.from, payload.order_id);
+                }
+            }
+
             MessageType::LimitOrder => {
                 println!(
-                    "[Exchange {}] LIMIT_ORDER from {} (not implemented)",
+                    "[Exchange {}] LIMIT_ORDER from {} (use SubmitOrder instead)",
                     self.name, msg.from
                 );
             }
 
             MessageType::LiquidationScan => {
-                // Liquidation agent requested a scan
                 let now_ns = sim.now_ns();
                 self.process_liquidation_scan(sim, now_ns);
+            }
+
+            MessageType::GetPendingOrders => {
+                self.handle_get_pending_orders(sim, msg.from);
+            }
+
+            MessageType::ExecuteOrder => {
+                if let MessagePayload::ExecuteOrder(payload) = &msg.payload {
+                    let now_ns = sim.now_ns();
+                    self.handle_execute_order_from_keeper(sim, msg.from, payload.order_id, now_ns);
+                }
             }
 
             _ => {}
