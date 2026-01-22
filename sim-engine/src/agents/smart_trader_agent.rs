@@ -1,7 +1,8 @@
 use crate::agents::Agent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, MarketOrderPayload, MarketStatePayload, Message, MessagePayload, MessageType,
-    OracleTickPayload, OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, Side, SimulatorApi,
+    AgentId, CloseOrderPayload, ExecutionType, MarketOrderPayload, MarketStatePayload, Message,
+    MessagePayload, MessageType, OrderPayload, OrderType, OracleTickPayload, OrderExecutedPayload,
+    OrderExecutionType, PositionLiquidatedPayload, Side, SimulatorApi,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
@@ -129,8 +130,11 @@ pub struct SmartTraderAgent {
     liquidations: u32,
     total_pnl: i128,
 
-    // NEW: track skipped trades due to safety
     skipped_due_to_oi: u32,
+    
+    pending_sl_order_id: Option<u64>,
+    pending_tp_order_id: Option<u64>,
+    use_conditional_sl_tp: bool,
 }
 
 impl SmartTraderAgent {
@@ -168,6 +172,9 @@ impl SmartTraderAgent {
             liquidations: 0,
             total_pnl: 0,
             skipped_due_to_oi: 0,
+            pending_sl_order_id: None,
+            pending_tp_order_id: None,
+            use_conditional_sl_tp: true,
         }
     }
 
@@ -403,22 +410,110 @@ impl SmartTraderAgent {
             self.entry_price = None;
             self.last_close_at = now_ns;
             self.trades_closed += 1;
+            self.pending_sl_order_id = None;
+            self.pending_tp_order_id = None;
         }
     }
 
-    fn handle_order_executed(&mut self, payload: &OrderExecutedPayload) {
+    fn submit_sl_tp_orders(&mut self, sim: &mut dyn SimulatorApi, entry_price: u64) {
+        let (sl_pct, tp_pct) = match &self.strategy {
+            TradingStrategy::Hodler { stop_loss_pct, take_profit_pct, .. } => {
+                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
+            }
+            TradingStrategy::Institutional { stop_loss_pct, take_profit_pct, .. } => {
+                (*stop_loss_pct, *take_profit_pct)
+            }
+            TradingStrategy::TrendFollower { stop_loss_pct, take_profit_pct, .. } => {
+                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
+            }
+            TradingStrategy::MeanReversion { .. } => (0.0, 0.0),
+            TradingStrategy::Arbitrageur { stop_loss_pct, take_profit_pct, .. } => {
+                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
+            }
+            TradingStrategy::FundingHarvester { stop_loss_pct, .. } => (*stop_loss_pct, 0.0),
+        };
+
+        let side = match self.position_side {
+            Some(s) => s,
+            None => return,
+        };
+
+        if sl_pct > 0.0 {
+            let sl_price = match side {
+                Side::Buy => ((entry_price as f64) * (1.0 - sl_pct / 100.0)) as u64,
+                Side::Sell => ((entry_price as f64) * (1.0 + sl_pct / 100.0)) as u64,
+            };
+
+            let sl_order = OrderPayload {
+                symbol: self.symbol.clone(),
+                side,
+                order_type: OrderType::Decrease,
+                execution_type: ExecutionType::StopLoss,
+                qty: None,
+                leverage: None,
+                size_delta_usd: None,
+                trigger_price: Some(sl_price),
+                acceptable_price: None,
+                valid_for_sec: Some(86400),
+            };
+
+            sim.send(
+                self.id,
+                self.exchange_id,
+                MessageType::SubmitOrder,
+                MessagePayload::Order(sl_order),
+            );
+        }
+
+        if tp_pct > 0.0 {
+            let tp_price = match side {
+                Side::Buy => ((entry_price as f64) * (1.0 + tp_pct / 100.0)) as u64,
+                Side::Sell => ((entry_price as f64) * (1.0 - tp_pct / 100.0)) as u64,
+            };
+
+            let tp_order = OrderPayload {
+                symbol: self.symbol.clone(),
+                side,
+                order_type: OrderType::Decrease,
+                execution_type: ExecutionType::TakeProfit,
+                qty: None,
+                leverage: None,
+                size_delta_usd: None,
+                trigger_price: Some(tp_price),
+                acceptable_price: None,
+                valid_for_sec: Some(86400),
+            };
+
+            sim.send(
+                self.id,
+                self.exchange_id,
+                MessageType::SubmitOrder,
+                MessagePayload::Order(tp_order),
+            );
+        }
+    }
+
+    fn handle_order_executed(&mut self, sim: &mut dyn SimulatorApi, payload: &OrderExecutedPayload) {
         match payload.order_type {
             OrderExecutionType::Increase => {
                 let actual = payload.collateral_delta;
                 self.balance += self.collateral_in_position;
                 self.balance -= actual;
                 self.collateral_in_position = actual;
+                
+                if self.use_conditional_sl_tp {
+                    if let Some(price) = self.current_price {
+                        self.submit_sl_tp_orders(sim, price);
+                    }
+                }
             }
             OrderExecutionType::Decrease => {
                 self.balance += self.collateral_in_position;
                 self.balance += payload.pnl;
                 self.total_pnl += payload.pnl;
                 self.collateral_in_position = 0;
+                self.pending_sl_order_id = None;
+                self.pending_tp_order_id = None;
             }
             OrderExecutionType::Liquidation => {}
         }
@@ -820,7 +915,7 @@ impl Agent for SmartTraderAgent {
         sim.wakeup(self.id, now_ns + self.wake_interval_ns);
     }
 
-    fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
+    fn on_message(&mut self, sim: &mut dyn SimulatorApi, msg: &Message) {
         match msg.msg_type {
             MessageType::OracleTick => {
                 if let MessagePayload::OracleTick(OracleTickPayload { symbol, price, .. }) = &msg.payload {
@@ -849,9 +944,25 @@ impl Agent for SmartTraderAgent {
             MessageType::OrderExecuted => {
                 if let MessagePayload::OrderExecuted(p) = &msg.payload {
                     if p.symbol == self.symbol {
-                        self.handle_order_executed(p);
+                        self.handle_order_executed(sim, p);
                     }
                 }
+            }
+            MessageType::OrderPending => {
+                if let MessagePayload::Text(text) = &msg.payload {
+                    if let Some(id_str) = text.strip_prefix("order_id:") {
+                        if let Ok(id) = id_str.parse::<u64>() {
+                            if self.pending_sl_order_id.is_none() {
+                                self.pending_sl_order_id = Some(id);
+                            } else if self.pending_tp_order_id.is_none() {
+                                self.pending_tp_order_id = Some(id);
+                            }
+                        }
+                    }
+                }
+            }
+            MessageType::OrderTriggered | MessageType::OrderCancelled => {
+                // SL/TP was triggered or cancelled - position state already handled
             }
             _ => {}
         }
