@@ -1,4 +1,5 @@
 pub type AgentId = u32;
+pub type OrderId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MessageType {
@@ -20,8 +21,17 @@ pub enum MessageType {
     OrderRejected,
     LiquidationScan,
     LiquidationExecute,
-    PositionLiquidated, // Notify trader their position was liquidated
-    MarketState,        // Broadcast OI and liquidity data
+    PositionLiquidated,
+    MarketState,
+    SubmitOrder,
+    ExecuteOrder,
+    OrderPending,
+    OrderTriggered,
+    // Keeper API
+    GetPendingOrders,
+    PendingOrdersList,
+    OrderAlreadyExecuted,
+    KeeperReward,
 }
 
 use serde::{Deserialize, Serialize};
@@ -33,6 +43,22 @@ pub enum Side {
     Buy,
     #[serde(alias = "short", alias = "Short")]
     Sell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionType {
+    Market,
+    Limit,
+    StopLoss,
+    TakeProfit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrderType {
+    Increase,
+    Decrease,
 }
 
 /// Price range (bid/ask spread) for perpetual DEX
@@ -62,7 +88,40 @@ pub struct MarketOrderPayload {
 #[derive(Debug, Clone)]
 pub struct CloseOrderPayload {
     pub symbol: String,
-    pub side: Side, // Which side position to close (Buy=Long, Sell=Short)
+    pub side: Side,
+}
+
+/// Universal order payload for all order types
+#[derive(Debug, Clone)]
+pub struct OrderPayload {
+    pub symbol: String,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub execution_type: ExecutionType,
+    
+    // For Increase
+    pub qty: Option<f64>,
+    pub leverage: Option<u32>,
+    
+    // For Decrease
+    pub size_delta_usd: Option<u64>,
+    
+    // Conditional execution
+    pub trigger_price: Option<u64>,
+    pub acceptable_price: Option<u64>,
+    
+    // TTL
+    pub valid_for_sec: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelOrderPayload {
+    pub order_id: OrderId,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecuteOrderPayload {
+    pub order_id: OrderId,
 }
 
 /// Oracle price update with signature for on-chain verification.
@@ -113,9 +172,31 @@ pub struct OrderExecutedPayload {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderExecutionType {
-    Increase, // Opening/increasing position
-    Decrease, // Closing/decreasing position
+    Increase,
+    Decrease,
     Liquidation,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingOrderInfo {
+    pub order_id: OrderId,
+    pub symbol: String,
+    pub side: Side,
+    pub order_type: OrderType,
+    pub execution_type: ExecutionType,
+    pub trigger_price: u64,
+    pub owner: AgentId,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingOrdersListPayload {
+    pub orders: Vec<PendingOrderInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct KeeperRewardPayload {
+    pub order_id: OrderId,
+    pub reward_micro_usd: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +211,11 @@ pub enum MessagePayload {
     PositionLiquidated(PositionLiquidatedPayload),
     OrderExecuted(OrderExecutedPayload),
     MarketState(MarketStatePayload),
+    Order(OrderPayload),
+    CancelOrder(CancelOrderPayload),
+    ExecuteOrder(ExecuteOrderPayload),
+    PendingOrdersList(PendingOrdersListPayload),
+    KeeperReward(KeeperRewardPayload),
 }
 
 /// Core message type that flows through the Kernel.
