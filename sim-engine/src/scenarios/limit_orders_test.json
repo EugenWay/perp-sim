@@ -1,0 +1,87 @@
+{
+  "scenario_name": "Limit Orders Test",
+  "duration_sec": 300,
+  "logs_dir": "logs",
+  "exchange": {
+    "id": 1,
+    "name": "PerpExchange",
+    "markets": [
+      {
+        "id": 0,
+        "symbol": "ETH-USD",
+        "index_token": "ETH",
+        "index_decimals": 18,
+        "collateral_token": "USDT",
+        "collateral_decimals": 6,
+        "initial_liquidity": {
+          "collateral_amount": 10000000000000,
+          "index_amount": 1000000000000000000000,
+          "liquidity_usd": 100000000000000
+        }
+      }
+    ]
+  },
+  "oracles": [
+    {
+      "id": 2,
+      "name": "PythOracle",
+      "symbols": ["ETH-USD", "USDT-USD"],
+      "provider": "Pyth",
+      "cache_duration_ms": 5000,
+      "wake_interval_ms": 500
+    }
+  ],
+  "limit_traders": [
+    {
+      "id": 10,
+      "name": "MeanRevBot",
+      "symbol": "ETH-USD",
+      "strategy": "mean_reversion",
+      "entry_offset_pct": 1.5,
+      "stop_loss_pct": 3.0,
+      "take_profit_pct": 2.0,
+      "leverage": 5,
+      "trend_lookback": 10,
+      "qty": 0.5,
+      "wake_interval_ms": 2000,
+      "balance": 50000000000
+    },
+    {
+      "id": 11,
+      "name": "BreakoutBot",
+      "symbol": "ETH-USD",
+      "strategy": "breakout",
+      "breakout_offset_pct": 1.0,
+      "stop_loss_pct": 2.0,
+      "take_profit_pct": 3.0,
+      "leverage": 3,
+      "direction": "buy",
+      "qty": 0.3,
+      "wake_interval_ms": 5000,
+      "balance": 30000000000
+    }
+  ],
+  "keepers": [
+    {
+      "id": 20,
+      "name": "Keeper",
+      "wake_interval_ms": 200
+    }
+  ],
+  "market_maker": {
+    "id": 5,
+    "name": "MM",
+    "symbol": "ETH-USD",
+    "target_oi_per_side": 50000000000,
+    "max_imbalance_pct": 30.0,
+    "order_size_tokens": 1.0,
+    "leverage": 2,
+    "wake_interval_ms": 500,
+    "balance": 500000000000
+  },
+  "liquidation_agent": {
+    "id": 3,
+    "name": "Liquidator",
+    "wake_interval_ms": 200
+  }
+}

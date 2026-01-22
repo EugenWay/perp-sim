@@ -1,6 +1,8 @@
 use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     human_agent::HumanAgent,
+    keeper_agent::{KeeperAgent, KeeperConfig},
+    limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy},
     liquidation_agent::LiquidationAgent,
     market_maker_agent::{MarketMakerAgent, MarketMakerConfig},
     oracle_agent::OracleAgent,
@@ -179,6 +181,50 @@ struct MarketMakerJsonConfig {
     balance: i128,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LimitTraderJsonConfig {
+    id: u32,
+    name: String,
+    symbol: String,
+    strategy: String,
+    #[serde(default = "default_leverage")]
+    leverage: u32,
+    #[serde(default)]
+    qty: f64,
+    #[serde(default = "default_limit_wake_interval")]
+    wake_interval_ms: u64,
+    #[serde(default)]
+    balance: Option<i128>,
+    #[serde(default)]
+    entry_offset_pct: Option<f64>,
+    #[serde(default)]
+    breakout_offset_pct: Option<f64>,
+    #[serde(default)]
+    stop_loss_pct: Option<f64>,
+    #[serde(default)]
+    take_profit_pct: Option<f64>,
+    #[serde(default)]
+    trend_lookback: Option<u32>,
+    #[serde(default)]
+    direction: Option<String>,
+}
+
+fn default_limit_wake_interval() -> u64 {
+    2000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KeeperJsonConfig {
+    id: u32,
+    name: String,
+    #[serde(default = "default_keeper_wake_interval")]
+    wake_interval_ms: u64,
+}
+
+fn default_keeper_wake_interval() -> u64 {
+    200
+}
+
 fn default_mm_target_oi() -> i128 {
     150_000_000_000 // $150k per side
 }
@@ -208,9 +254,13 @@ pub struct SimConfig {
     #[serde(default)]
     smart_traders: Vec<SmartTraderJsonConfig>,
     #[serde(default)]
+    limit_traders: Vec<LimitTraderJsonConfig>,
+    #[serde(default)]
     liquidation_agent: Option<LiquidationAgentConfig>,
     #[serde(default)]
     market_maker: Option<MarketMakerJsonConfig>,
+    #[serde(default)]
+    keepers: Vec<KeeperJsonConfig>,
 }
 
 fn default_wake_interval() -> u64 {
@@ -256,8 +306,10 @@ impl Default for SimConfig {
                 wake_interval_ms: 3000,
             }],
             smart_traders: vec![],
+            limit_traders: vec![],
             liquidation_agent: None,
             market_maker: None,
+            keepers: vec![],
         }
     }
 }
@@ -348,6 +400,61 @@ fn create_smart_trader(smart_cfg: &SmartTraderJsonConfig, exchange_id: u32) -> S
     };
 
     SmartTraderAgent::new(smart_cfg.id, smart_config)
+}
+
+fn parse_limit_strategy(cfg: &LimitTraderJsonConfig) -> LimitStrategy {
+    match cfg.strategy.to_lowercase().as_str() {
+        "mean_reversion" | "meanrev" => LimitStrategy::MeanReversion {
+            entry_offset_pct: cfg.entry_offset_pct.unwrap_or(1.5),
+            stop_loss_pct: cfg.stop_loss_pct.unwrap_or(3.0),
+            take_profit_pct: cfg.take_profit_pct.unwrap_or(2.0),
+            leverage: cfg.leverage,
+            trend_lookback: cfg.trend_lookback.unwrap_or(10),
+        },
+        "breakout" => {
+            let direction = match cfg.direction.as_deref() {
+                Some("sell") | Some("short") => Side::Sell,
+                _ => Side::Buy,
+            };
+            LimitStrategy::Breakout {
+                breakout_offset_pct: cfg.breakout_offset_pct.unwrap_or(1.0),
+                stop_loss_pct: cfg.stop_loss_pct.unwrap_or(2.0),
+                take_profit_pct: cfg.take_profit_pct.unwrap_or(3.0),
+                leverage: cfg.leverage,
+                direction,
+            }
+        }
+        "grid" => LimitStrategy::Grid {
+            levels: 5,
+            spacing_pct: 1.0,
+            qty_per_level: cfg.qty,
+            leverage: cfg.leverage,
+            take_profit_pct: cfg.take_profit_pct.unwrap_or(1.5),
+        },
+        _ => LimitStrategy::MeanReversion {
+            entry_offset_pct: 1.5,
+            stop_loss_pct: 3.0,
+            take_profit_pct: 2.0,
+            leverage: cfg.leverage,
+            trend_lookback: 10,
+        },
+    }
+}
+
+fn create_limit_trader(cfg: &LimitTraderJsonConfig, exchange_id: u32) -> LimitTraderAgent {
+    let strategy = parse_limit_strategy(cfg);
+
+    let config = LimitTraderConfig {
+        name: cfg.name.clone(),
+        exchange_id,
+        symbol: cfg.symbol.clone(),
+        strategy,
+        qty: cfg.qty,
+        wake_interval_ms: cfg.wake_interval_ms,
+        balance: cfg.balance,
+    };
+
+    LimitTraderAgent::new(cfg.id, config)
 }
 
 /// Run a simulation with given configuration
@@ -496,11 +603,32 @@ fn run_with_config(config: SimConfig) {
         println!("[Scenario] Added MarketMaker: {}", mm_cfg.name);
     }
 
-    // Create smart traders using shared helper
+    // Create smart traders
     for smart_cfg in &config.smart_traders {
         engine
             .kernel
             .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
+    }
+
+    // Create limit traders
+    for limit_cfg in &config.limit_traders {
+        engine
+            .kernel
+            .add_agent(Box::new(create_limit_trader(limit_cfg, config.exchange.id)));
+        println!("[Scenario] Added LimitTrader: {}", limit_cfg.name);
+    }
+
+    // Add keepers
+    for keeper_cfg in &config.keepers {
+        let keeper_config = KeeperConfig {
+            name: keeper_cfg.name.clone(),
+            exchange_id: config.exchange.id,
+            wake_interval_ms: keeper_cfg.wake_interval_ms,
+        };
+        engine
+            .kernel
+            .add_agent(Box::new(KeeperAgent::new(keeper_cfg.id, keeper_config)));
+        println!("[Scenario] Added Keeper: {}", keeper_cfg.name);
     }
 
     // Add liquidation agent if configured
@@ -699,11 +827,30 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         println!("[Scenario] Added MarketMaker: {}", mm_cfg.name);
     }
 
-    // Add smart traders from scenario using shared helper
+    // Add smart traders
     for smart_cfg in &config.smart_traders {
         engine
             .kernel
             .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
+    }
+
+    // Add limit traders
+    for limit_cfg in &config.limit_traders {
+        engine
+            .kernel
+            .add_agent(Box::new(create_limit_trader(limit_cfg, config.exchange.id)));
+    }
+
+    // Add keepers
+    for keeper_cfg in &config.keepers {
+        let keeper_config = KeeperConfig {
+            name: keeper_cfg.name.clone(),
+            exchange_id: config.exchange.id,
+            wake_interval_ms: keeper_cfg.wake_interval_ms,
+        };
+        engine
+            .kernel
+            .add_agent(Box::new(KeeperAgent::new(keeper_cfg.id, keeper_config)));
     }
 
     // Add liquidation agent if configured
@@ -730,18 +877,12 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
     println!();
     println!("=== REALTIME MODE ===");
     println!(
-        "Agents: {} smart_traders + HumanAgent{}{}",
+        "Agents: {} smart + {} limit + {} keepers + HumanAgent{}{}",
         config.smart_traders.len(),
-        if config.market_maker.is_some() {
-            " + MarketMaker"
-        } else {
-            ""
-        },
-        if config.liquidation_agent.is_some() {
-            " + LiquidationAgent"
-        } else {
-            ""
-        }
+        config.limit_traders.len(),
+        config.keepers.len(),
+        if config.market_maker.is_some() { " + MM" } else { "" },
+        if config.liquidation_agent.is_some() { " + Liquidator" } else { "" }
     );
     println!();
     println!("=== API Endpoints ===");
