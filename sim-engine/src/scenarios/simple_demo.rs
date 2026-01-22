@@ -2,7 +2,7 @@ use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     human_agent::HumanAgent,
     keeper_agent::{KeeperAgent, KeeperConfig},
-    limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy},
+    limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy, OrderMode},
     liquidation_agent::LiquidationAgent,
     market_maker_agent::{MarketMakerAgent, MarketMakerConfig},
     oracle_agent::OracleAgent,
@@ -207,6 +207,27 @@ struct LimitTraderJsonConfig {
     trend_lookback: Option<u32>,
     #[serde(default)]
     direction: Option<String>,
+    // Smart strategy fields
+    #[serde(default)]
+    sma_fast: Option<u32>,
+    #[serde(default)]
+    sma_slow: Option<u32>,
+    #[serde(default)]
+    rsi_period: Option<u32>,
+    #[serde(default)]
+    rsi_low: Option<f64>,
+    #[serde(default)]
+    rsi_high: Option<f64>,
+    #[serde(default)]
+    atr_period: Option<u32>,
+    #[serde(default)]
+    entry_atr_mult: Option<f64>,
+    #[serde(default)]
+    stop_atr_mult: Option<f64>,
+    #[serde(default)]
+    take_atr_mult: Option<f64>,
+    #[serde(default)]
+    order_mode: Option<String>,
 }
 
 fn default_limit_wake_interval() -> u64 {
@@ -431,6 +452,25 @@ fn parse_limit_strategy(cfg: &LimitTraderJsonConfig) -> LimitStrategy {
             leverage: cfg.leverage,
             take_profit_pct: cfg.take_profit_pct.unwrap_or(1.5),
         },
+        "smart" => {
+            let order_mode = match cfg.order_mode.as_deref() {
+                Some("active") => OrderMode::Active,
+                _ => OrderMode::Passive,
+            };
+            LimitStrategy::Smart {
+                sma_fast: cfg.sma_fast.unwrap_or(10),
+                sma_slow: cfg.sma_slow.unwrap_or(30),
+                rsi_period: cfg.rsi_period.unwrap_or(14),
+                rsi_low: cfg.rsi_low.unwrap_or(35.0),
+                rsi_high: cfg.rsi_high.unwrap_or(65.0),
+                atr_period: cfg.atr_period.unwrap_or(14),
+                entry_atr_mult: cfg.entry_atr_mult.unwrap_or(0.5),
+                stop_atr_mult: cfg.stop_atr_mult.unwrap_or(1.2),
+                take_atr_mult: cfg.take_atr_mult.unwrap_or(1.8),
+                leverage: cfg.leverage,
+                order_mode,
+            }
+        }
         _ => LimitStrategy::MeanReversion {
             entry_offset_pct: 1.5,
             stop_loss_pct: 3.0,
