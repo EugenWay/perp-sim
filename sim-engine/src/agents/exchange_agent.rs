@@ -1,11 +1,10 @@
 use crate::agents::Agent;
 use crate::events::SimEvent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, ExecutionType, KeeperRewardPayload, MarketOrderPayload,
-    MarketStatePayload, Message, MessagePayload, MessageType, OrderId, OrderPayload,
-    OrderType as SimOrderType, OracleTickPayload, OrderExecutedPayload, OrderExecutionType,
-    PendingOrderInfo, PendingOrdersListPayload, PositionLiquidatedPayload, Price,
-    Side as SimSide, SimulatorApi,
+    AgentId, CloseOrderPayload, ExecutionType, KeeperRewardPayload, MarketOrderPayload, MarketStatePayload, Message,
+    MessagePayload, MessageType, OracleTickPayload, OrderExecutedPayload, OrderExecutionType, OrderId, OrderPayload,
+    OrderType as SimOrderType, PendingOrderInfo, PendingOrdersListPayload, PositionLiquidatedPayload,
+    PreviewRequestPayload, PreviewResponsePayload, Price, Side as SimSide, SimulatorApi,
 };
 use crate::pending_orders::{PendingOrder, PendingOrderStore};
 use crate::trigger_checker;
@@ -193,7 +192,7 @@ pub struct ExchangeAgent {
     symbol_to_market: HashMap<String, (MarketId, AssetId)>,
     #[allow(dead_code)]
     symbol_decimals: HashMap<String, (u32, u32)>,
-    
+
     pending_orders: PendingOrderStore,
 }
 
@@ -765,7 +764,7 @@ impl ExchangeAgent {
         if !self.symbol_to_market.contains_key(&order.symbol) {
             return Err(format!("unknown symbol: {}", order.symbol));
         }
-        
+
         match order.execution_type {
             ExecutionType::Market => {}
             ExecutionType::Limit | ExecutionType::StopLoss | ExecutionType::TakeProfit => {
@@ -774,7 +773,7 @@ impl ExchangeAgent {
                 }
             }
         }
-        
+
         match order.order_type {
             SimOrderType::Increase => {
                 if order.qty.is_none() || order.qty.unwrap() <= 0.0 {
@@ -783,24 +782,20 @@ impl ExchangeAgent {
             }
             SimOrderType::Decrease => {}
         }
-        
+
         // SL/TP only for Decrease
-        if matches!(order.execution_type, ExecutionType::StopLoss | ExecutionType::TakeProfit) 
-            && order.order_type != SimOrderType::Decrease 
+        if matches!(
+            order.execution_type,
+            ExecutionType::StopLoss | ExecutionType::TakeProfit
+        ) && order.order_type != SimOrderType::Decrease
         {
             return Err("StopLoss/TakeProfit only valid for Decrease orders".into());
         }
-        
+
         Ok(())
     }
 
-    fn process_submit_order(
-        &mut self,
-        sim: &mut dyn SimulatorApi,
-        from: AgentId,
-        order: &OrderPayload,
-        now_ns: u64,
-    ) {
+    fn process_submit_order(&mut self, sim: &mut dyn SimulatorApi, from: AgentId, order: &OrderPayload, now_ns: u64) {
         if let Err(e) = self.validate_order(order) {
             println!("[Exchange {}] REJECTED from {}: {}", self.name, from, e);
             return;
@@ -951,7 +946,10 @@ impl ExchangeAgent {
         let price = match self.last_prices.get(symbol) {
             Some(&mid) => Price { min: mid, max: mid },
             None => {
-                println!("[Exchange {}] ExecuteOrder rejected: no price for {}", self.name, symbol);
+                println!(
+                    "[Exchange {}] ExecuteOrder rejected: no price for {}",
+                    self.name, symbol
+                );
                 return;
             }
         };
@@ -968,16 +966,14 @@ impl ExchangeAgent {
         if let Some(removed_order) = self.pending_orders.remove(order_id) {
             println!(
                 "[Exchange {}] KEEPER {} EXECUTES #{} {:?} {:?}",
-                self.name, keeper_id, order_id,
-                removed_order.payload.execution_type,
-                removed_order.payload.side
+                self.name, keeper_id, order_id, removed_order.payload.execution_type, removed_order.payload.side
             );
 
             self.execute_triggered_order(sim, &removed_order, now_ns);
 
             // 4. Send reward (0.1% of size)
-            let size_micro = removed_order.payload.qty.unwrap_or(0.0)
-                * self.last_prices.get(symbol).copied().unwrap_or(0) as f64;
+            let size_micro =
+                removed_order.payload.qty.unwrap_or(0.0) * self.last_prices.get(symbol).copied().unwrap_or(0) as f64;
             let reward = (size_micro as u64 * 10) / 10000; // 0.1% = 10 bps
 
             sim.send(
@@ -1321,6 +1317,183 @@ impl ExchangeAgent {
             }
         }
     }
+
+    fn handle_preview_request(
+        &mut self,
+        sim: &mut dyn SimulatorApi,
+        from: AgentId,
+        req: PreviewRequestPayload,
+        now_ns: u64,
+    ) {
+        let mut response = PreviewResponsePayload {
+            success: false,
+            message: "preview_failed".to_string(),
+            symbol: req.symbol.clone(),
+            side: req.side,
+            qty: req.qty,
+            leverage: req.leverage,
+            size_usd: 0,
+            collateral: 0,
+            entry_price: 0,
+            current_price: 0,
+            liquidation_price: 0,
+        };
+
+        let (market_id, collateral_asset) = match self.symbol_to_market.get(&req.symbol) {
+            Some(m) => *m,
+            None => {
+                response.message = format!("unknown symbol: {}", req.symbol);
+                sim.send(
+                    self.id,
+                    from,
+                    MessageType::PreviewResponse,
+                    MessagePayload::PreviewResponse(response),
+                );
+                return;
+            }
+        };
+
+        if self.price_cache.borrow().get(&req.symbol).is_none() {
+            response.message = format!("no price for {}", req.symbol);
+            sim.send(
+                self.id,
+                from,
+                MessageType::PreviewResponse,
+                MessagePayload::PreviewResponse(response),
+            );
+            return;
+        }
+
+        let (index_decimals, collateral_decimals) = self.symbol_decimals.get(&req.symbol).copied().unwrap_or((18, 6));
+
+        let current_price_micro = self.last_prices.get(&req.symbol).copied().unwrap_or(0);
+        if current_price_micro == 0 {
+            response.message = "current price unavailable".to_string();
+            sim.send(
+                self.id,
+                from,
+                MessageType::PreviewResponse,
+                MessagePayload::PreviewResponse(response),
+            );
+            return;
+        }
+
+        if req.qty <= 0.0 {
+            response.message = "qty must be > 0".to_string();
+            sim.send(
+                self.id,
+                from,
+                MessageType::PreviewResponse,
+                MessagePayload::PreviewResponse(response),
+            );
+            return;
+        }
+
+        let leverage = req.leverage.max(1) as u64;
+        let size_micro = (req.qty * current_price_micro as f64) as u64;
+        let collateral_micro = size_micro / leverage;
+
+        let collateral_atoms = if collateral_decimals >= 6 {
+            U256::from(collateral_micro) * U256::exp10((collateral_decimals - 6) as usize)
+        } else {
+            U256::from(collateral_micro) / U256::exp10((6 - collateral_decimals) as usize)
+        };
+
+        let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
+        let side = Self::convert_side(req.side);
+        let account = self.get_or_create_account(from);
+        let now_sec: Timestamp = now_ns / 1_000_000_000;
+
+        let oracle = SimOracle::new(self.price_cache.clone(), &self.markets);
+        let mut preview_executor = Executor::new(self.executor.state.clone(), BasicServicesBundle::default(), oracle);
+
+        let perp_order = Order {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+            order_type: OrderType::Increase,
+            collateral_delta_tokens: collateral_atoms,
+            size_delta_usd: size_usd_1e30,
+            withdraw_collateral_amount: U256::zero(),
+            target_leverage_x: req.leverage.max(1),
+            created_at: now_sec,
+            valid_from: now_sec,
+            valid_until: now_sec + 3600,
+        };
+
+        let order_id = preview_executor.submit_order(perp_order);
+        if let Err(e) = preview_executor.execute_order(now_sec, order_id) {
+            response.message = format!("preview execute failed: {:?}", e);
+            sim.send(
+                self.id,
+                from,
+                MessageType::PreviewResponse,
+                MessagePayload::PreviewResponse(response),
+            );
+            return;
+        }
+
+        let position_key = PositionKey {
+            account,
+            market_id,
+            collateral_token: collateral_asset,
+            side,
+        };
+
+        let position = match preview_executor.state.positions.get(&position_key) {
+            Some(pos) => pos,
+            None => {
+                response.message = "preview position not found".to_string();
+                sim.send(
+                    self.id,
+                    from,
+                    MessageType::PreviewResponse,
+                    MessagePayload::PreviewResponse(response),
+                );
+                return;
+            }
+        };
+
+        let entry_price_atom = if !position.size_tokens.is_zero() {
+            position.size_usd / position.size_tokens
+        } else {
+            U256::zero()
+        };
+        let entry_price_micro = denormalize_price_from_atom(entry_price_atom, index_decimals);
+
+        let liq_price_micro = match preview_executor.calculate_liquidation_price(now_sec, position_key) {
+            Ok(liq_price_atom) => denormalize_price_from_atom(liq_price_atom, index_decimals),
+            Err(e) => {
+                response.message = format!("liquidation price calc failed: {:?}", e);
+                sim.send(
+                    self.id,
+                    from,
+                    MessageType::PreviewResponse,
+                    MessagePayload::PreviewResponse(response),
+                );
+                return;
+            }
+        };
+
+        let size_usd_micro = usd_to_micro(position.size_usd) as i128;
+        let collateral_micro_actual = position.collateral_amount.low_u64() as i128;
+
+        response.success = true;
+        response.message = "ok".to_string();
+        response.size_usd = size_usd_micro;
+        response.collateral = collateral_micro_actual;
+        response.entry_price = entry_price_micro;
+        response.current_price = current_price_micro;
+        response.liquidation_price = liq_price_micro;
+
+        sim.send(
+            self.id,
+            from,
+            MessageType::PreviewResponse,
+            MessagePayload::PreviewResponse(response),
+        );
+    }
 }
 
 impl Agent for ExchangeAgent {
@@ -1374,7 +1547,7 @@ impl Agent for ExchangeAgent {
                         let now_ns = sim.now_ns();
                         let _liquidatable = self.emit_snapshots(sim, now_ns);
                         self.broadcast_market_state(sim);
-                        
+
                         // Keeper'ы сами проверяют триггеры, тут только cleanup
                         self.cleanup_expired_orders(sim, now_ns);
                     }
@@ -1418,6 +1591,12 @@ impl Agent for ExchangeAgent {
             MessageType::LiquidationScan => {
                 let now_ns = sim.now_ns();
                 self.process_liquidation_scan(sim, now_ns);
+            }
+            MessageType::PreviewRequest => {
+                if let MessagePayload::PreviewRequest(payload) = &msg.payload {
+                    let now_ns = sim.now_ns();
+                    self.handle_preview_request(sim, msg.from, payload.clone(), now_ns);
+                }
             }
 
             MessageType::GetPendingOrders => {

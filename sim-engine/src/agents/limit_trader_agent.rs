@@ -73,6 +73,7 @@ pub struct LimitTraderConfig {
 
 #[derive(Debug, Clone, Copy)]
 struct Candle {
+    #[allow(dead_code)]
     open: u64,
     high: u64,
     low: u64,
@@ -158,6 +159,7 @@ impl LimitTraderAgent {
         Some(sum as f64 / period as f64)
     }
 
+    #[allow(dead_code)]
     fn calc_ema(&self, period: u32) -> Option<f64> {
         if self.price_history.len() < period as usize {
             return None;

@@ -84,7 +84,7 @@ export type SimEvent =
   | PositionLiquidated;
 
 export interface ApiCommand {
-  action: 'open' | 'close' | 'status' | 'balance';
+  action: 'open' | 'close' | 'status' | 'balance' | 'preview';
   symbol: string;
   side?: string;
   qty?: number;

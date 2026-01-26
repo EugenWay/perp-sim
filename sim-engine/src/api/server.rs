@@ -88,6 +88,9 @@ impl ApiServer {
                     (Method::Post, "/close") => {
                         handle_close_request(request, &cmd_tx_clone, &response_rx);
                     }
+                    (Method::Post, "/preview") => {
+                        handle_preview_request(request, &cmd_tx_clone, &response_rx);
+                    }
                     (Method::Get, "/status") => {
                         handle_status_request(request, &cmd_tx_clone, &response_rx);
                     }
@@ -235,6 +238,55 @@ fn handle_close_request(
         Err(_) => ApiResponse {
             success: false,
             message: "Timeout".to_string(),
+            data: None,
+        },
+    };
+    send_json_response(request, &resp);
+}
+
+fn handle_preview_request(
+    mut request: tiny_http::Request,
+    cmd_tx: &Sender<ApiCommand>,
+    response_rx: &Receiver<ApiResponse>,
+) {
+    let mut body = String::new();
+    if let Err(e) = std::io::Read::read_to_string(&mut request.as_reader(), &mut body) {
+        send_json_response(request, &ApiResponse {
+            success: false,
+            message: format!("Failed to read body: {}", e),
+            data: None,
+        });
+        return;
+    }
+
+    let mut cmd: ApiCommand = match serde_json::from_str(&body) {
+        Ok(c) => c,
+        Err(e) => {
+            send_json_response(request, &ApiResponse {
+                success: false,
+                message: format!("Invalid JSON: {}", e),
+                data: None,
+            });
+            return;
+        }
+    };
+
+    cmd.action = "preview".to_string();
+
+    if let Err(e) = cmd_tx.send(cmd) {
+        send_json_response(request, &ApiResponse {
+            success: false,
+            message: format!("Failed to send command: {}", e),
+            data: None,
+        });
+        return;
+    }
+
+    let resp = match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(resp) => resp,
+        Err(_) => ApiResponse {
+            success: false,
+            message: "Timeout waiting for response".to_string(),
             data: None,
         },
     };

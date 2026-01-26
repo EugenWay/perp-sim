@@ -32,6 +32,8 @@ pub enum MessageType {
     PendingOrdersList,
     OrderAlreadyExecuted,
     KeeperReward,
+    PreviewRequest,
+    PreviewResponse,
 }
 
 use serde::{Deserialize, Serialize};
@@ -144,6 +146,29 @@ pub struct MarketStatePayload {
 }
 
 #[derive(Debug, Clone)]
+pub struct PreviewRequestPayload {
+    pub symbol: String,
+    pub side: Side,
+    pub qty: f64,
+    pub leverage: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviewResponsePayload {
+    pub success: bool,
+    pub message: String,
+    pub symbol: String,
+    pub side: Side,
+    pub qty: f64,
+    pub leverage: u32,
+    pub size_usd: i128,
+    pub collateral: i128,
+    pub entry_price: u64,
+    pub current_price: u64,
+    pub liquidation_price: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct LiquidationTaskPayload {
     pub symbol: String,
     pub max_positions: u32,
@@ -211,6 +236,8 @@ pub enum MessagePayload {
     PositionLiquidated(PositionLiquidatedPayload),
     OrderExecuted(OrderExecutedPayload),
     MarketState(MarketStatePayload),
+    PreviewRequest(PreviewRequestPayload),
+    PreviewResponse(PreviewResponsePayload),
     Order(OrderPayload),
     CancelOrder(CancelOrderPayload),
     ExecuteOrder(ExecuteOrderPayload),

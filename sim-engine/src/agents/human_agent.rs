@@ -6,7 +6,8 @@ use crate::agents::Agent;
 use crate::api::{ApiCommand, ApiResponse};
 use crate::messages::{
     AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, Side, SimulatorApi,
+    OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, PreviewRequestPayload,
+    PreviewResponsePayload, Side, SimulatorApi,
 };
 
 /// Initial balance for Human trader (in micro-USD = $10,000)
@@ -26,6 +27,8 @@ pub struct HumanAgent {
     balance: i128,
     /// Total realized PnL
     total_pnl: i128,
+    preview_tx: Sender<PreviewResponsePayload>,
+    preview_rx: Receiver<PreviewResponsePayload>,
 }
 
 impl HumanAgent {
@@ -37,6 +40,7 @@ impl HumanAgent {
         response_tx: Sender<ApiResponse>,
         wake_interval_ms: u64,
     ) -> Self {
+        let (preview_tx, preview_rx) = crossbeam_channel::bounded::<PreviewResponsePayload>(1);
         Self {
             id,
             name,
@@ -48,6 +52,8 @@ impl HumanAgent {
             collateral_used: 0,
             balance: INITIAL_BALANCE,
             total_pnl: 0,
+            preview_tx,
+            preview_rx,
         }
     }
 
@@ -65,6 +71,7 @@ impl HumanAgent {
                 "close" => self.handle_close(sim, &cmd),
                 "status" => self.handle_status(),
                 "balance" => self.handle_balance(),
+                "preview" => self.handle_preview(sim, &cmd),
                 _ => ApiResponse {
                     success: false,
                     message: format!("Unknown action: {}", cmd.action),
@@ -171,6 +178,56 @@ impl HumanAgent {
         }
     }
 
+    fn handle_preview(&mut self, sim: &mut dyn SimulatorApi, cmd: &ApiCommand) -> ApiResponse {
+        let side = match cmd.side.as_deref() {
+            Some("long") | Some("buy") | Some("Long") | Some("Buy") => Side::Buy,
+            Some("short") | Some("sell") | Some("Short") | Some("Sell") => Side::Sell,
+            _ => return ApiResponse {
+                success: false,
+                message: "side must be 'long' or 'short'".to_string(),
+                data: None,
+            },
+        };
+
+        let qty = cmd.qty.unwrap_or(1.0);
+        let leverage = cmd.leverage.unwrap_or(5);
+
+        sim.send(
+            self.id,
+            self.exchange_id,
+            MessageType::PreviewRequest,
+            MessagePayload::PreviewRequest(PreviewRequestPayload {
+                symbol: cmd.symbol.clone(),
+                side,
+                qty,
+                leverage,
+            }),
+        );
+
+        match self.preview_rx.recv_timeout(std::time::Duration::from_millis(1000)) {
+            Ok(resp) => ApiResponse {
+                success: resp.success,
+                message: resp.message.clone(),
+                data: Some(serde_json::json!({
+                    "symbol": resp.symbol,
+                    "side": format!("{:?}", resp.side),
+                    "qty": resp.qty,
+                    "leverage": resp.leverage,
+                    "size_usd": resp.size_usd,
+                    "collateral": resp.collateral,
+                    "entry_price": resp.entry_price,
+                    "current_price": resp.current_price,
+                    "liquidation_price": resp.liquidation_price,
+                })),
+            },
+            Err(_) => ApiResponse {
+                success: false,
+                message: "preview timeout".to_string(),
+                data: None,
+            },
+        }
+    }
+
     fn handle_order_executed(&mut self, payload: &OrderExecutedPayload) {
         match payload.order_type {
             OrderExecutionType::Increase => {
@@ -264,6 +321,11 @@ impl Agent for HumanAgent {
                     self.collateral_used -= *collateral_lost;
                     // Remove position tracking
                     self.open_positions.remove(symbol);
+                }
+            }
+            MessageType::PreviewResponse => {
+                if let MessagePayload::PreviewResponse(payload) = &msg.payload {
+                    let _ = self.preview_tx.send(payload.clone());
                 }
             }
             _ => {}

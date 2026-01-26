@@ -8,8 +8,10 @@ pub struct PendingOrder {
     pub id: OrderId,
     pub owner: AgentId,
     pub payload: OrderPayload,
+    #[allow(dead_code)]
     pub created_at_ns: u64,
     pub valid_until_ns: u64,
+    #[allow(dead_code)]
     pub position_entry_price: Option<u64>,
 }
 
@@ -81,6 +83,7 @@ impl PendingOrderStore {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn get_by_owner(&self, owner: AgentId) -> Vec<&PendingOrder> {
         self.by_owner
             .get(&owner)

@@ -58,6 +58,7 @@ fn check_trigger_condition(
     }
 }
 
+#[allow(dead_code)]
 pub fn passes_slippage_check(order: &PendingOrder, execution_price: u64) -> bool {
     match order.payload.acceptable_price {
         None => true,

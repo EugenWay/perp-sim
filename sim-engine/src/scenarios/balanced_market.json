@@ -18,6 +18,19 @@
           "index_amount": 3000000000000000000000000,
           "liquidity_usd": 10000000000000000
         }
+      },
+      {
+        "id": 1,
+        "symbol": "BTC-USD",
+        "index_token": "BTC",
+        "index_decimals": 8,
+        "collateral_token": "USDT",
+        "collateral_decimals": 6,
+        "initial_liquidity": {
+          "collateral_amount": 8000000000000000,
+          "index_amount": 100000000000,
+          "liquidity_usd": 15000000000000000
+        }
       }
     ]
   },
@@ -25,7 +38,7 @@
     {
       "id": 2,
       "name": "PythOracle",
-      "symbols": ["ETH-USD"],
+      "symbols": ["ETH-USD", "BTC-USD"],
       "provider": "Pyth",
       "cache_duration_ms": 2000,
       "wake_interval_ms": 2000

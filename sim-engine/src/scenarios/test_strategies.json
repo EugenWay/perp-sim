@@ -18,6 +18,19 @@
           "index_amount": 3000000000000000000000,
           "liquidity_usd": 100000000000000
         }
+      },
+      {
+        "id": 1,
+        "symbol": "BTC-USD",
+        "index_token": "BTC",
+        "index_decimals": 8,
+        "collateral_token": "USDT",
+        "collateral_decimals": 6,
+        "initial_liquidity": {
+          "collateral_amount": 6000000000000000,
+          "index_amount": 120000000000,
+          "liquidity_usd": 120000000000000
+        }
       }
     ]
   },
@@ -25,7 +38,7 @@
     {
       "id": 2,
       "name": "PythOracle",
-      "symbols": ["ETH-USD"],
+      "symbols": ["ETH-USD", "BTC-USD"],
       "provider": "Pyth",
       "cache_duration_ms": 1000,
       "wake_interval_ms": 1000
@@ -2458,9 +2471,118 @@
       "id": 7009,
       "name": "Risky_S_7009",
       "symbol": "ETH-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.01,
+      "qty_max": 0.03,
+      "hold_duration_sec": 45,
+      "take_profit_pct": 1.8,
+      "stop_loss_pct": 3.5,
+      "wake_interval_ms": 1200,
+      "balance": 18000000000,
+      "start_delay_ms": 6000,
+      "id": 9100,
+      "name": "BTC_Hodler_L_9100",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.01,
+      "qty_max": 0.03,
+      "hold_duration_sec": 45,
+      "take_profit_pct": 1.8,
+      "stop_loss_pct": 3.5,
+      "wake_interval_ms": 1200,
+      "balance": 18000000000,
+      "start_delay_ms": 6000,
+      "id": 9101,
+      "name": "BTC_Hodler_S_9101",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "arbitrageur",
+      "leverage": 2,
+      "qty_min": 0.015,
+      "qty_max": 0.04,
+      "entry_deviation_pct": 2.0,
+      "hold_duration_sec": 25,
+      "take_profit_pct": 0.6,
+      "stop_loss_pct": 2.0,
+      "wake_interval_ms": 900,
+      "balance": 22000000000,
+      "start_delay_ms": 4000,
+      "id": 9102,
+      "name": "BTC_Arb_9102",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "arbitrageur",
+      "leverage": 3,
+      "qty_min": 0.012,
+      "qty_max": 0.035,
+      "entry_deviation_pct": 2.5,
+      "hold_duration_sec": 30,
+      "take_profit_pct": 0.5,
+      "stop_loss_pct": 2.5,
+      "wake_interval_ms": 1000,
+      "balance": 24000000000,
+      "start_delay_ms": 4500,
+      "id": 9103,
+      "name": "BTC_Arb_9103",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "funding_harvester",
+      "leverage": 2,
+      "qty_min": 0.02,
+      "qty_max": 0.05,
+      "entry_deviation_pct": 1.6,
+      "exit_deviation_pct": 3.5,
+      "min_hold_sec": 40,
+      "max_hold_sec": 160,
+      "stop_loss_pct": 4.5,
+      "wake_interval_ms": 1300,
+      "balance": 26000000000,
+      "start_delay_ms": 7000,
+      "id": 9104,
+      "name": "BTC_Fund_9104",
+      "symbol": "BTC-USD"
     }
   ],
   "limit_traders": [
+    {
+      "id": 8300,
+      "name": "BTC_LimitMeanRev_A",
+      "symbol": "BTC-USD",
+      "strategy": "mean_reversion",
+      "entry_offset_pct": 0.7,
+      "stop_loss_pct": 1.6,
+      "take_profit_pct": 1.1,
+      "leverage": 3,
+      "trend_lookback": 6,
+      "qty": 0.02,
+      "wake_interval_ms": 1600,
+      "balance": 20000000000
+    },
+    {
+      "id": 8301,
+      "name": "BTC_LimitBreakout_A",
+      "symbol": "BTC-USD",
+      "strategy": "breakout",
+      "breakout_offset_pct": 0.5,
+      "stop_loss_pct": 1.4,
+      "take_profit_pct": 2.0,
+      "leverage": 3,
+      "direction": "buy",
+      "qty": 0.015,
+      "wake_interval_ms": 2400,
+      "balance": 18000000000
+    },
     {
       "id": 8100,
       "name": "LimitMeanRev_A",
