@@ -65,6 +65,7 @@ pub struct LimitTraderConfig {
     pub name: String,
     pub exchange_id: AgentId,
     pub symbol: String,
+    pub address: Option<String>,
     pub strategy: LimitStrategy,
     pub qty: f64,
     pub wake_interval_ms: u64,
@@ -85,6 +86,7 @@ pub struct LimitTraderAgent {
     name: String,
     exchange_id: AgentId,
     symbol: String,
+    address: Option<String>,
     strategy: LimitStrategy,
     qty: f64,
     wake_interval_ns: u64,
@@ -123,6 +125,7 @@ impl LimitTraderAgent {
             name: config.name,
             exchange_id: config.exchange_id,
             symbol: config.symbol,
+            address: config.address,
             strategy: config.strategy,
             qty: config.qty,
             wake_interval_ns: config.wake_interval_ms * 1_000_000,
@@ -147,6 +150,10 @@ impl LimitTraderAgent {
             orders_cancelled: 0,
             total_pnl: 0,
         }
+    }
+
+    pub fn set_address(&mut self, address: String) {
+        self.address = Some(address);
     }
 
     // ========== INDICATORS ==========
@@ -653,10 +660,14 @@ impl Agent for LimitTraderAgent {
         };
 
         println!(
-            "[{}] START {} bal=${:.0}",
+            "[{}] START {} bal=${:.0}{}",
             self.name,
             strategy_name,
-            self.balance as f64 / 1_000_000.0
+            self.balance as f64 / 1_000_000.0,
+            self.address
+                .as_deref()
+                .map(|addr| format!(" addr={}", addr))
+                .unwrap_or_default()
         );
 
         sim.wakeup(self.id, sim.now_ns() + self.wake_interval_ns);

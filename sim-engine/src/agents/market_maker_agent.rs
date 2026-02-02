@@ -20,6 +20,7 @@ pub struct MarketMakerConfig {
     pub name: String,
     pub exchange_id: AgentId,
     pub symbol: String,
+    pub address: Option<String>,
     /// Target OI in micro-USD (e.g., 100_000_000_000 = $100k per side)
     pub target_oi_per_side: i128,
     /// Maximum imbalance percentage before acting (e.g., 20.0 = 20%)
@@ -40,6 +41,7 @@ impl Default for MarketMakerConfig {
             name: "MarketMaker".to_string(),
             exchange_id: 1,
             symbol: "ETH-USD".to_string(),
+            address: None,
             target_oi_per_side: 150_000_000_000, // $150k per side target
             max_imbalance_pct: 30.0,             // Act when imbalance > 30%
             order_size_tokens: 2.0,              // 2 ETH per order
@@ -55,6 +57,7 @@ pub struct MarketMakerAgent {
     name: String,
     exchange_id: AgentId,
     symbol: String,
+    address: Option<String>,
 
     target_oi_per_side: i128,
     max_imbalance_pct: f64,
@@ -87,6 +90,7 @@ impl MarketMakerAgent {
             name: config.name,
             exchange_id: config.exchange_id,
             symbol: config.symbol,
+            address: config.address,
             target_oi_per_side: config.target_oi_per_side,
             max_imbalance_pct: config.max_imbalance_pct,
             order_size_tokens: config.order_size_tokens,
@@ -297,11 +301,15 @@ impl Agent for MarketMakerAgent {
 
     fn on_start(&mut self, sim: &mut dyn SimulatorApi) {
         println!(
-            "[MM {}] Starting: target_oi=${:.0}k/side, max_imbalance={:.0}%, order_size={:.1} tokens",
+            "[MM {}] Starting: target_oi=${:.0}k/side, max_imbalance={:.0}%, order_size={:.1} tokens{}",
             self.name,
             self.target_oi_per_side as f64 / 1_000_000_000.0,
             self.max_imbalance_pct,
-            self.order_size_tokens
+            self.order_size_tokens,
+            self.address
+                .as_deref()
+                .map(|addr| format!(" addr={}", addr))
+                .unwrap_or_default()
         );
 
         // Schedule first wakeup

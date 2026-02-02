@@ -8,6 +8,7 @@ use crate::messages::{
 };
 use crate::pending_orders::{PendingOrder, PendingOrderStore};
 use crate::trigger_checker;
+use crate::vara::{Side as VaraSide, VaraClient};
 use perp_futures::executor::Executor;
 use perp_futures::oracle::Oracle;
 use perp_futures::services::BasicServicesBundle;
@@ -20,6 +21,7 @@ use primitive_types::U256;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 // ==== Price Normalization ====
 // perp-futures uses USD(1e30) per 1 atom of token
@@ -194,43 +196,38 @@ pub struct ExchangeAgent {
     symbol_decimals: HashMap<String, (u32, u32)>,
 
     pending_orders: PendingOrderStore,
+    vara_client: Arc<VaraClient>,
+    poll_interval_ns: u64,
 }
 
 impl ExchangeAgent {
-    pub fn new(id: AgentId, name: String, markets: Vec<MarketConfig>) -> Self {
+    pub fn new(id: AgentId, name: String, markets: Vec<MarketConfig>, vara_client: Arc<VaraClient>) -> Self {
         let price_cache = Rc::new(RefCell::new(PriceCache::new()));
 
         let mut state = State::default();
         let mut symbol_to_market = HashMap::new();
         let mut symbol_decimals = HashMap::new();
 
-        // Setup each market from config
         for (idx, market_cfg) in markets.iter().enumerate() {
             let market_id = MarketId(market_cfg.id);
-            let collateral_asset = AssetId(idx as u32 * 2); // USDT
-            let index_asset = AssetId(idx as u32 * 2 + 1); // ETH/BTC/etc
+            let collateral_asset = AssetId(idx as u32 * 2);
+            let index_asset = AssetId(idx as u32 * 2 + 1);
 
-            // Register decimals for price normalization
             price_cache
                 .borrow_mut()
                 .set_decimals(&market_cfg.symbol, market_cfg.index_decimals);
 
-            // Add initial liquidity (in atoms)
-            // Collateral: convert from micro-USD to atoms (collateral_decimals)
             let collateral_atoms = U256::from(market_cfg.collateral_amount as u128)
                 * U256::exp10(market_cfg.collateral_decimals as usize)
-                / U256::exp10(6); // micro-USD to atoms
+                / U256::exp10(6);
             state
                 .pool_balances
                 .add_liquidity(market_id, collateral_asset, collateral_atoms);
 
-            // Index tokens: as provided (already in atoms or conceptual units)
             state
                 .pool_balances
                 .add_liquidity(market_id, index_asset, U256::from(market_cfg.index_amount as u128));
 
-            // Configure market state
-            // liquidity_usd in USD(1e30): convert from micro-USD
             let liquidity_usd_1e30 = U256::from(market_cfg.liquidity_usd as u128) * U256::exp10(24);
             {
                 let market = state.markets.entry(market_id).or_default();
@@ -248,13 +245,11 @@ impl ExchangeAgent {
             );
 
             println!(
-                "[Exchange {}] Market {} ({}) initialized: liquidity=${:.0}M, index_decimals={}, collateral_decimals={}",
+                "[Exchange {}] Market {} ({}) initialized: liquidity=${:.0}M",
                 name,
                 market_cfg.symbol,
                 market_cfg.id,
                 market_cfg.liquidity_usd as f64 / 1_000_000_000_000.0,
-                market_cfg.index_decimals,
-                market_cfg.collateral_decimals
             );
         }
 
@@ -274,6 +269,8 @@ impl ExchangeAgent {
             symbol_to_market,
             symbol_decimals,
             pending_orders: PendingOrderStore::new(),
+            vara_client,
+            poll_interval_ns: 3_000_000_000,
         }
     }
 
@@ -299,6 +296,94 @@ impl ExchangeAgent {
             Side::Long => SimSide::Buy,
             Side::Short => SimSide::Sell,
         }
+    }
+
+    fn sync_from_chain(&mut self, sim: &mut dyn SimulatorApi) {
+        let positions = match self.vara_client.get_all_positions() {
+            Ok(list) => list,
+            Err(e) => {
+                eprintln!("[Exchange {}] Failed to fetch positions: {}", self.name, e);
+                return;
+            }
+        };
+
+        let mut oi_long_usd: i128 = 0;
+        let mut oi_short_usd: i128 = 0;
+
+        for position in positions.iter() {
+            if position.is_empty() {
+                continue;
+            }
+
+            let size_micro = usd_to_micro(position.size_usd) as i128;
+            match position.key.side {
+                VaraSide::Long => oi_long_usd += size_micro,
+                VaraSide::Short => oi_short_usd += size_micro,
+            }
+        }
+
+        let symbol = match self.markets.first() {
+            Some(m) => m.symbol.clone(),
+            None => return,
+        };
+
+        let liquidity_usd = self.markets.first().map(|m| m.liquidity_usd).unwrap_or_default();
+
+        let payload = MarketStatePayload {
+            symbol,
+            oi_long_usd,
+            oi_short_usd,
+            liquidity_usd,
+        };
+
+        sim.broadcast(self.id, MessageType::MarketState, MessagePayload::MarketState(payload));
+    }
+
+    fn funding_rate_bps_hour_fp(market: &perp_futures::state::MarketState) -> i64 {
+        let long_oi = market.oi_long_usd;
+        let short_oi = market.oi_short_usd;
+        if long_oi.is_zero() && short_oi.is_zero() {
+            return 0;
+        }
+        let sign = if long_oi > short_oi {
+            1i64
+        } else if short_oi > long_oi {
+            -1i64
+        } else {
+            0i64
+        };
+        if sign == 0 {
+            return 0;
+        }
+
+        // Match perp-futures funding.rs: DAILY_RATE_BPS = 1 (0.01% / day)
+        const DAILY_RATE_BPS: i64 = 1;
+        const FP: i64 = 1_000_000; // bps * 1e6
+        let hourly_fp = (DAILY_RATE_BPS * FP) / 24;
+        sign * hourly_fp
+    }
+
+    fn borrowing_rate_bps_hour_fp(market: &perp_futures::state::MarketState) -> u64 {
+        let borrowed = market.oi_long_usd.saturating_add(market.oi_short_usd);
+        let liquidity = market.liquidity_usd;
+        if liquidity.is_zero() {
+            return 0;
+        }
+
+        // Match perp-futures borrowing.rs: base=1 bps/day, slope=9 bps/day
+        const BASE_RATE_BPS_DAY: f64 = 1.0;
+        const SLOPE_RATE_BPS_DAY: f64 = 9.0;
+        const FP: f64 = 1_000_000.0; // bps * 1e6
+
+        let borrowed_f = borrowed.low_u128() as f64;
+        let liquidity_f = liquidity.low_u128() as f64;
+        if liquidity_f <= 0.0 {
+            return 0;
+        }
+        let util = (borrowed_f / liquidity_f).clamp(0.0, 1.0);
+        let rate_bps_day = BASE_RATE_BPS_DAY + SLOPE_RATE_BPS_DAY * util;
+        let rate_bps_hour = rate_bps_day / 24.0;
+        (rate_bps_hour * FP) as u64
     }
 
     /// Broadcast MarketState to all agents (for OI-based strategies)
@@ -328,6 +413,8 @@ impl ExchangeAgent {
                     oi_long_usd: usd_to_micro(market.oi_long_usd),
                     oi_short_usd: usd_to_micro(market.oi_short_usd),
                     liquidity_usd: usd_to_micro(market.liquidity_usd),
+                    funding_rate_bps_hour_fp: Self::funding_rate_bps_hour_fp(market),
+                    borrowing_rate_bps_hour_fp: Self::borrowing_rate_bps_hour_fp(market),
                 });
             }
         }
@@ -1337,6 +1424,10 @@ impl ExchangeAgent {
             entry_price: 0,
             current_price: 0,
             liquidation_price: 0,
+            funding_fee_usd: 0,
+            borrowing_fee_usd: 0,
+            price_impact_usd: 0,
+            close_fees_usd: 0,
         };
 
         let (market_id, collateral_asset) = match self.symbol_to_market.get(&req.symbol) {
@@ -1455,6 +1546,14 @@ impl ExchangeAgent {
             }
         };
 
+        let preview = match preview_executor.is_liquidatable_by_margin(now_sec, position_key) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                response.message = format!("preview liquidation failed: {:?}", e);
+                None
+            }
+        };
+
         let entry_price_atom = if !position.size_tokens.is_zero() {
             position.size_usd / position.size_tokens
         } else {
@@ -1486,6 +1585,12 @@ impl ExchangeAgent {
         response.entry_price = entry_price_micro;
         response.current_price = current_price_micro;
         response.liquidation_price = liq_price_micro;
+        if let Some(p) = preview {
+            response.funding_fee_usd = pnl_to_micro_usd(p.funding_fee_usd);
+            response.borrowing_fee_usd = usd_to_micro(p.borrowing_fee_usd);
+            response.price_impact_usd = pnl_to_micro_usd(p.price_impact_usd);
+            response.close_fees_usd = usd_to_micro(p.close_fees_usd);
+        }
 
         sim.send(
             self.id,
@@ -1505,8 +1610,14 @@ impl Agent for ExchangeAgent {
         &self.name
     }
 
-    fn on_start(&mut self, _sim: &mut dyn SimulatorApi) {
+    fn on_start(&mut self, sim: &mut dyn SimulatorApi) {
         println!("[Exchange {}] started with {} market(s)", self.name, self.markets.len());
+        sim.wakeup(self.id, sim.now_ns() + self.poll_interval_ns);
+    }
+
+    fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
+        self.sync_from_chain(sim);
+        sim.wakeup(self.id, now_ns + self.poll_interval_ns);
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {
