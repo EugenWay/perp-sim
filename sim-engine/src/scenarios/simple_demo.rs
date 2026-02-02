@@ -2,7 +2,7 @@ use crate::agents::{
     exchange_agent::{ExchangeAgent, MarketConfig},
     human_agent::HumanAgent,
     keeper_agent::{KeeperAgent, KeeperConfig},
-    limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy, OrderMode},
+    limit_trader_agent::{LimitStrategy, LimitTraderAgent, LimitTraderConfig, OrderMode},
     liquidation_agent::LiquidationAgent,
     market_maker_agent::{MarketMakerAgent, MarketMakerConfig},
     oracle_agent::OracleAgent,
@@ -13,12 +13,15 @@ use crate::events::{EventListener, SimEvent};
 use crate::logging::{CsvExecutionLogger, CsvLiquidationLogger, CsvMarketLogger, CsvOracleLogger, CsvPositionLogger};
 use crate::messages::Side;
 use crate::sim_engine::SimEngine;
+use crate::vara::VaraClient;
 use crossbeam_channel;
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
+use std::sync::Arc;
 
 struct ClosureListener<F: FnMut(&SimEvent)> {
     closure: F,
@@ -35,6 +38,90 @@ struct LiquidityConfig {
     collateral_amount: i128,
     index_amount: i128,
     liquidity_usd: i128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AddressEntry {
+    name: String,
+    address: String,
+}
+
+struct AddressBook {
+    entries: HashMap<String, String>,
+}
+
+impl AddressBook {
+    fn load() -> Self {
+        // Try to find addresses.json in multiple locations
+        let path = std::env::var("VARA_ADDRESS_BOOK").ok().or_else(|| {
+            let candidates = [
+                "keys/addresses.json",
+                "../keys/addresses.json",
+                "../../keys/addresses.json",
+            ];
+            candidates
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .map(|s| s.to_string())
+        });
+
+        let entries = match path {
+            Some(path) => match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str::<Vec<AddressEntry>>(&content) {
+                    Ok(list) => {
+                        println!("[AddressBook] Loaded {} addresses from {}", list.len(), path);
+                        list.into_iter().map(|e| (e.name, e.address)).collect()
+                    }
+                    Err(e) => {
+                        eprintln!("[AddressBook] Failed to parse {}: {}", path, e);
+                        HashMap::new()
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[AddressBook] Failed to read {}: {}", path, e);
+                    HashMap::new()
+                }
+            },
+            None => {
+                eprintln!("[AddressBook] addresses.json not found (set VARA_ADDRESS_BOOK or place in keys/)");
+                HashMap::new()
+            }
+        };
+
+        Self { entries }
+    }
+
+    fn address_for_agent(&self, id: u32) -> Option<String> {
+        let name = format!("bot_{:03}", id);
+        self.entries.get(&name).cloned()
+    }
+
+    fn write_funding_list(&self, path: &str) {
+        if self.entries.is_empty() {
+            return; // Don't write empty file
+        }
+
+        // Try to find the correct keys directory
+        let actual_path = if std::path::Path::new("keys").exists() {
+            path.to_string()
+        } else if std::path::Path::new("../keys").exists() {
+            path.replace("keys/", "../keys/")
+        } else {
+            path.to_string()
+        };
+
+        let mut items: Vec<_> = self.entries.iter().collect();
+        items.sort_by_key(|(name, _)| *name);
+        let mut lines = Vec::with_capacity(items.len());
+        for (name, address) in items {
+            lines.push(format!("{name} {address}"));
+        }
+        if let Err(e) = std::fs::write(&actual_path, lines.join("\n")) {
+            eprintln!("[AddressBook] Failed to write funding list {}: {}", actual_path, e);
+        } else {
+            println!("[AddressBook] Funding list written to {}", actual_path);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,6 +499,7 @@ fn create_smart_trader(smart_cfg: &SmartTraderJsonConfig, exchange_id: u32) -> S
         name: smart_cfg.name.clone(),
         exchange_id,
         symbol: smart_cfg.symbol.clone(),
+        address: None,
         strategy,
         qty_min,
         qty_max,
@@ -488,6 +576,7 @@ fn create_limit_trader(cfg: &LimitTraderJsonConfig, exchange_id: u32) -> LimitTr
         name: cfg.name.clone(),
         exchange_id,
         symbol: cfg.symbol.clone(),
+        address: None,
         strategy,
         qty: cfg.qty,
         wake_interval_ms: cfg.wake_interval_ms,
@@ -498,16 +587,19 @@ fn create_limit_trader(cfg: &LimitTraderJsonConfig, exchange_id: u32) -> LimitTr
 }
 
 /// Run a simulation with given configuration
-fn run_with_config(config: SimConfig) {
+fn run_with_config(config: SimConfig, vara_client: Arc<VaraClient>) {
     println!("[Scenario] Loading scenario: {}", config.scenario_name);
     println!("[Scenario] Duration: {}s", config.duration_sec);
     println!("[Scenario] Markets: {}", config.exchange.markets.len());
     println!("[Scenario] Oracles: {}", config.oracles.len());
     println!("[Scenario] SmartTraders: {}", config.smart_traders.len());
+    println!("[Scenario] Blockchain: Vara Network");
 
     let max_ticks = (config.duration_sec * 1000 / 100) as usize;
 
     let mut engine = SimEngine::with_default_latency();
+    let address_book = AddressBook::load();
+    address_book.write_funding_list("keys/funding_addresses.txt");
 
     // Register CSV loggers for all event types
     let _ = fs::create_dir_all(&config.logs_dir);
@@ -591,11 +683,8 @@ fn run_with_config(config: SimConfig) {
         })
         .collect();
 
-    engine.kernel.add_agent(Box::new(ExchangeAgent::new(
-        config.exchange.id,
-        config.exchange.name.clone(),
-        markets,
-    )));
+    let exchange = ExchangeAgent::new(config.exchange.id, config.exchange.name.clone(), markets, vara_client.clone());
+    engine.kernel.add_agent(Box::new(exchange));
 
     for oracle_cfg in &config.oracles {
         let cache_duration_sec = oracle_cfg.cache_duration_ms / 1000;
@@ -626,10 +715,15 @@ fn run_with_config(config: SimConfig) {
 
     // Add Market Maker if configured (MUST be added BEFORE other traders for seed liquidity)
     if let Some(mm_cfg) = &config.market_maker {
+        let mm_address = address_book.address_for_agent(mm_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for MarketMaker id={}", mm_cfg.id);
+            std::process::exit(1);
+        });
         let mm_config = MarketMakerConfig {
             name: mm_cfg.name.clone(),
             exchange_id: config.exchange.id,
             symbol: mm_cfg.symbol.clone(),
+            address: Some(mm_address),
             target_oi_per_side: mm_cfg.target_oi_per_side,
             max_imbalance_pct: mm_cfg.max_imbalance_pct,
             order_size_tokens: mm_cfg.order_size_tokens,
@@ -645,50 +739,51 @@ fn run_with_config(config: SimConfig) {
 
     // Create smart traders
     for smart_cfg in &config.smart_traders {
-        engine
-            .kernel
-            .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
+        let address = address_book.address_for_agent(smart_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for SmartTrader id={}", smart_cfg.id);
+            std::process::exit(1);
+        });
+        let mut agent = create_smart_trader(smart_cfg, config.exchange.id);
+        agent.set_address(address);
+        engine.kernel.add_agent(Box::new(agent));
     }
 
     // Create limit traders
     for limit_cfg in &config.limit_traders {
-        engine
-            .kernel
-            .add_agent(Box::new(create_limit_trader(limit_cfg, config.exchange.id)));
+        let address = address_book.address_for_agent(limit_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for LimitTrader id={}", limit_cfg.id);
+            std::process::exit(1);
+        });
+        let mut agent = create_limit_trader(limit_cfg, config.exchange.id);
+        agent.set_address(address);
+        engine.kernel.add_agent(Box::new(agent));
         println!("[Scenario] Added LimitTrader: {}", limit_cfg.name);
     }
 
-    // Add keepers
+    // Add keepers (no blockchain access - they send messages to Exchange)
     for keeper_cfg in &config.keepers {
         let keeper_config = KeeperConfig {
             name: keeper_cfg.name.clone(),
             exchange_id: config.exchange.id,
+            address: None, // Keepers don't need address - Exchange signs for them
             wake_interval_ms: keeper_cfg.wake_interval_ms,
         };
-        engine
-            .kernel
-            .add_agent(Box::new(KeeperAgent::new(keeper_cfg.id, keeper_config)));
+        let agent = KeeperAgent::new(keeper_cfg.id, keeper_config);
+        engine.kernel.add_agent(Box::new(agent));
         println!("[Scenario] Added Keeper: {}", keeper_cfg.name);
     }
 
-    // Add liquidation agent if configured
+    // Add liquidation agent if configured (no blockchain access - sends LiquidationScan to Exchange)
     if let Some(liq_cfg) = &config.liquidation_agent {
         let wake_interval_ns = liq_cfg.wake_interval_ms * 1_000_000;
-        engine.kernel.add_agent(Box::new(LiquidationAgent::new(
-            liq_cfg.id,
-            liq_cfg.name.clone(),
-            config.exchange.id,
-            wake_interval_ns,
-        )));
+        let agent = LiquidationAgent::new(liq_cfg.id, liq_cfg.name.clone(), config.exchange.id, wake_interval_ns);
+        engine.kernel.add_agent(Box::new(agent));
+        println!("[Scenario] Added Liquidation: {}", liq_cfg.name);
     }
 
     println!("[Scenario] starting {}", config.scenario_name);
     engine.run(max_ticks);
     println!("[Scenario] finished {}", config.scenario_name);
-}
-
-pub fn run() {
-    run_scenario("simple_demo");
 }
 
 fn find_config_file(scenario_name: &str) -> Option<String> {
@@ -708,7 +803,8 @@ fn find_config_file(scenario_name: &str) -> Option<String> {
     None
 }
 
-pub fn run_scenario(scenario_name: &str) {
+/// Run scenario with blockchain
+pub fn run_scenario_with_blockchain(scenario_name: &str, vara_client: Arc<VaraClient>) {
     let config = match find_config_file(scenario_name) {
         Some(path) => {
             println!("[Scenario] Found config: {}", path);
@@ -725,11 +821,11 @@ pub fn run_scenario(scenario_name: &str) {
         }
     };
 
-    run_with_config(config);
+    run_with_config(config, vara_client);
 }
 
-/// Run simulation in realtime mode with HTTP API for HumanAgent
-pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
+/// Run simulation in realtime mode with blockchain
+pub fn run_realtime_with_blockchain(scenario_name: &str, tick_ms: u64, api_port: u16, vara_client: Arc<VaraClient>) {
     let config = match find_config_file(scenario_name) {
         Some(path) => {
             println!("[Scenario] Found config: {}", path);
@@ -744,12 +840,19 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         }
     };
 
+    run_realtime_with_config(config, tick_ms, api_port, vara_client);
+}
+
+/// Internal realtime runner with config
+fn run_realtime_with_config(config: SimConfig, tick_ms: u64, api_port: u16, vara_client: Arc<VaraClient>) {
     println!("[Scenario] Loading: {} (REALTIME)", config.scenario_name);
     println!("[Scenario] Tick: {}ms, API port: {}", tick_ms, api_port);
 
     let max_ticks = usize::MAX; // Run indefinitely
 
     let mut engine = SimEngine::with_realtime(tick_ms);
+    let address_book = AddressBook::load();
+    address_book.write_funding_list("keys/funding_addresses.txt");
 
     // Register CSV loggers for all event types
     let _ = fs::create_dir_all(&config.logs_dir);
@@ -825,11 +928,8 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         })
         .collect();
 
-    engine.kernel.add_agent(Box::new(ExchangeAgent::new(
-        config.exchange.id,
-        config.exchange.name.clone(),
-        markets,
-    )));
+    let exchange = ExchangeAgent::new(config.exchange.id, config.exchange.name.clone(), markets, vara_client.clone());
+    engine.kernel.add_agent(Box::new(exchange));
 
     // Add oracles
     for oracle_cfg in &config.oracles {
@@ -850,10 +950,15 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     // Add Market Maker if configured (MUST be added BEFORE other traders for seed liquidity)
     if let Some(mm_cfg) = &config.market_maker {
+        let mm_address = address_book.address_for_agent(mm_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for MarketMaker id={}", mm_cfg.id);
+            std::process::exit(1);
+        });
         let mm_config = MarketMakerConfig {
             name: mm_cfg.name.clone(),
             exchange_id: config.exchange.id,
             symbol: mm_cfg.symbol.clone(),
+            address: Some(mm_address),
             target_oi_per_side: mm_cfg.target_oi_per_side,
             max_imbalance_pct: mm_cfg.max_imbalance_pct,
             order_size_tokens: mm_cfg.order_size_tokens,
@@ -869,46 +974,52 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
 
     // Add smart traders
     for smart_cfg in &config.smart_traders {
-        engine
-            .kernel
-            .add_agent(Box::new(create_smart_trader(smart_cfg, config.exchange.id)));
+        let address = address_book.address_for_agent(smart_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for SmartTrader id={}", smart_cfg.id);
+            std::process::exit(1);
+        });
+        let mut agent = create_smart_trader(smart_cfg, config.exchange.id);
+        agent.set_address(address);
+        engine.kernel.add_agent(Box::new(agent));
     }
 
     // Add limit traders
     for limit_cfg in &config.limit_traders {
-        engine
-            .kernel
-            .add_agent(Box::new(create_limit_trader(limit_cfg, config.exchange.id)));
+        let address = address_book.address_for_agent(limit_cfg.id).unwrap_or_else(|| {
+            eprintln!("[Scenario] Missing address for LimitTrader id={}", limit_cfg.id);
+            std::process::exit(1);
+        });
+        let mut agent = create_limit_trader(limit_cfg, config.exchange.id);
+        agent.set_address(address);
+        engine.kernel.add_agent(Box::new(agent));
     }
 
-    // Add keepers
+    // Add keepers (no blockchain access - they send messages to Exchange)
     for keeper_cfg in &config.keepers {
         let keeper_config = KeeperConfig {
             name: keeper_cfg.name.clone(),
             exchange_id: config.exchange.id,
+            address: None, // Keepers don't need address - Exchange signs for them
             wake_interval_ms: keeper_cfg.wake_interval_ms,
         };
-        engine
-            .kernel
-            .add_agent(Box::new(KeeperAgent::new(keeper_cfg.id, keeper_config)));
+        let agent = KeeperAgent::new(keeper_cfg.id, keeper_config);
+        engine.kernel.add_agent(Box::new(agent));
     }
 
-    // Add liquidation agent if configured
+    // Add liquidation agent if configured (no blockchain access - sends LiquidationScan to Exchange)
     if let Some(liq_cfg) = &config.liquidation_agent {
         let wake_interval_ns = liq_cfg.wake_interval_ms * 1_000_000;
-        engine.kernel.add_agent(Box::new(LiquidationAgent::new(
-            liq_cfg.id,
-            liq_cfg.name.clone(),
-            config.exchange.id,
-            wake_interval_ns,
-        )));
+        let agent = LiquidationAgent::new(liq_cfg.id, liq_cfg.name.clone(), config.exchange.id, wake_interval_ns);
+        engine.kernel.add_agent(Box::new(agent));
     }
 
     // Add HumanAgent (id=100, reserved)
+    let human_address = std::env::var("VARA_HUMAN_ADDRESS").ok();
     engine.kernel.add_agent(Box::new(HumanAgent::new(
         100,
         "HumanTrader".to_string(),
         config.exchange.id,
+        human_address,
         cmd_rx,
         human_response_tx,
         tick_ms,
@@ -922,7 +1033,11 @@ pub fn run_realtime(scenario_name: &str, tick_ms: u64, api_port: u16) {
         config.limit_traders.len(),
         config.keepers.len(),
         if config.market_maker.is_some() { " + MM" } else { "" },
-        if config.liquidation_agent.is_some() { " + Liquidator" } else { "" }
+        if config.liquidation_agent.is_some() {
+            " + Liquidator"
+        } else {
+            ""
+        }
     );
     println!();
     println!("=== API Endpoints ===");
