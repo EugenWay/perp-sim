@@ -35,6 +35,9 @@ export interface MarketSnapshot {
   oi_long_usd: number;
   oi_short_usd: number;
   liquidity_usd: number;
+  // bps * 1e6, per hour
+  funding_rate_bps_hour_fp: number;
+  borrowing_rate_bps_hour_fp: number;
 }
 
 export interface OrderExecuted {

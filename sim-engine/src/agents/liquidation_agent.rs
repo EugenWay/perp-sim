@@ -1,10 +1,5 @@
-//! Liquidation Agent
-//! Periodically scans all open positions and triggers liquidation for underwater positions.
-//! This agent wakes up at a fixed interval (e.g., 200ms) and sends liquidation scan requests
-//! to the Exchange agent.
-
 use crate::agents::Agent;
-use crate::messages::{AgentId, LiquidationTaskPayload, Message, MessagePayload, MessageType, SimulatorApi};
+use crate::messages::{AgentId, Message, MessagePayload, MessageType, SimulatorApi};
 
 pub struct LiquidationAgent {
     id: AgentId,
@@ -12,42 +7,24 @@ pub struct LiquidationAgent {
     exchange_id: AgentId,
     wake_interval_ns: u64,
     scan_count: u64,
+    liquidations_triggered: u64,
 }
 
 impl LiquidationAgent {
-    pub fn new(id: AgentId, name: String, exchange_id: AgentId, wake_interval_ns: u64) -> Self {
+    pub fn new(
+        id: AgentId,
+        name: String,
+        exchange_id: AgentId,
+        wake_interval_ns: u64,
+    ) -> Self {
         Self {
             id,
             name,
             exchange_id,
             wake_interval_ns,
             scan_count: 0,
+            liquidations_triggered: 0,
         }
-    }
-
-    fn scan_liquidations(&mut self, sim: &mut dyn SimulatorApi) {
-        self.scan_count += 1;
-
-        // Log every 10th scan to reduce noise
-        let verbose = self.scan_count <= 3 || self.scan_count.is_multiple_of(10);
-
-        if verbose {
-            println!(
-                "[Liquidation {}] Scan #{} at t={} ns",
-                self.name,
-                self.scan_count,
-                sim.now_ns()
-            );
-        }
-
-        // Send liquidation scan request to exchange
-        // The exchange will check all positions and execute liquidations if needed
-        let payload = MessagePayload::LiquidationTask(LiquidationTaskPayload {
-            symbol: "ALL".to_string(), // Scan all symbols
-            max_positions: 1000,       // Max positions to check in one scan
-        });
-
-        sim.send(self.id, self.exchange_id, MessageType::LiquidationScan, payload);
     }
 }
 
@@ -62,42 +39,29 @@ impl Agent for LiquidationAgent {
 
     fn on_start(&mut self, sim: &mut dyn SimulatorApi) {
         println!(
-            "[Liquidation {}] starting with scan interval {}ms -> exchange={}",
+            "[Liquidation {}] starting (interval={}ms)",
             self.name,
             self.wake_interval_ns / 1_000_000,
-            self.exchange_id
         );
-
-        // Schedule first wakeup
-        let now = sim.now_ns();
-        let next = now + self.wake_interval_ns;
-        sim.wakeup(self.id, next);
+        sim.wakeup(self.id, sim.now_ns() + self.wake_interval_ns);
     }
 
     fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
-        // Scan for liquidations
-        self.scan_liquidations(sim);
-
-        // Schedule next wakeup
-        let next = now_ns + self.wake_interval_ns;
-        sim.wakeup(self.id, next);
+        self.scan_count += 1;
+        sim.send(self.id, self.exchange_id, MessageType::LiquidationScan, MessagePayload::Empty);
+        sim.wakeup(self.id, now_ns + self.wake_interval_ns);
     }
 
     fn on_message(&mut self, _sim: &mut dyn SimulatorApi, msg: &Message) {
-        // Liquidation agent doesn't need to handle messages currently
-        // Could be extended to receive liquidation results from exchange
-        if msg.msg_type != MessageType::Wakeup
-            && msg.msg_type != MessageType::OracleTick
-            && msg.msg_type != MessageType::MarketState
-        {
-            println!(
-                "[Liquidation {}] received unexpected msg {:?} from {}",
-                self.name, msg.msg_type, msg.from
-            );
+        if msg.msg_type == MessageType::PositionLiquidated {
+            self.liquidations_triggered += 1;
         }
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {
-        println!("[Liquidation {}] stopping after {} scans", self.name, self.scan_count);
+        println!(
+            "[Liquidation {}] stopping after {} scans, {} liquidations triggered",
+            self.name, self.scan_count, self.liquidations_triggered
+        );
     }
 }

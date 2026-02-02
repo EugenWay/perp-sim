@@ -1,0 +1,110 @@
+type OrderId = struct {
+  u64,
+};
+
+type OraclePrices = struct {
+  index_price_min: u256,
+  index_price_max: u256,
+  collateral_price_min: u256,
+  collateral_price_max: u256,
+};
+
+type Order = struct {
+  account: actor_id,
+  side: Side,
+  order_type: OrderType,
+  execution_type: ExecutionType,
+  collateral_delta_tokens: u256,
+  size_delta_usd: u256,
+  /// Trigger price for Limit/StopLoss/TakeProfit orders.
+  /// For Market orders this must be None.
+  trigger_price: opt u256,
+  /// Optional slippage guard (highly recommended for Market execution).
+  acceptable_price: opt u256,
+  /// withdraw collateral tokens while partially closing.
+  /// This is independent from size_delta_usd and can increase leverage if not guarded.
+  withdraw_collateral_amount: u256,
+  /// Target leverage X for this step, e.g. 5 means 5x.
+  target_leverage_x: u32,
+  created_at: u64,
+  valid_from: u64,
+  valid_until: u64,
+};
+
+type PendingOrder = struct {
+  order_id: OrderId,
+  order: Order,
+};
+
+type Side = enum {
+  Long,
+  Short,
+};
+
+type OrderType = enum {
+  Increase,
+  Decrease,
+  Liquidation,
+};
+
+type ExecutionType = enum {
+  /// Executes immediately (no price trigger).
+  Market,
+  /// Executes only if the limit condition is satisfied.
+  Limit,
+  /// Triggered decrease order: protect downside.
+  StopLoss,
+  /// Triggered decrease order: lock profit.
+  TakeProfit,
+};
+
+type PositionKey = struct {
+  account: actor_id,
+  side: Side,
+};
+
+type Position = struct {
+  key: PositionKey,
+  size_usd: u256,
+  size_tokens: u256,
+  collateral_amount: u256,
+  pending_impact_tokens: SignedU256,
+  funding_index: SignedU256,
+  borrowing_index: u256,
+  opened_at: u64,
+  last_updated_at: u64,
+};
+
+type SignedU256 = struct {
+  is_negative: bool,
+  mag: u256,
+};
+
+type LiquidationPreview = struct {
+  collateral_value_usd: u256,
+  pnl_usd: SignedU256,
+  price_impact_usd: SignedU256,
+  borrowing_fee_usd: u256,
+  funding_fee_usd: SignedU256,
+  close_fees_usd: u256,
+  equity_usd: SignedU256,
+  required_usd: u256,
+  is_liquidatable: bool,
+};
+
+constructor {
+  Create : ();
+};
+
+service VaraPerps {
+  CancelOrder : (order_id: OrderId) -> null;
+  ExecuteOrder : (order_id: OrderId, prices: OraclePrices) -> null;
+  SubmitOrder : (order: Order) -> null;
+  query CalculateLiquidationPrice : (key: PositionKey) -> opt u256;
+  query GetAllPositions : () -> vec Position;
+  query GetClaimable : (account: actor_id) -> u256;
+  query GetOrder : (order_id: OrderId) -> opt Order;
+  query GetPendingOrders : () -> vec PendingOrder;
+  query GetPosition : (key: PositionKey) -> opt Position;
+  query IsLiquidatableByMargin : (key: PositionKey) -> opt LiquidationPreview;
+};

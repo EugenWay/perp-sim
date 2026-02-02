@@ -1,22 +1,19 @@
-//! HumanAgent - receives commands from HTTP API and executes them in the simulation.
-
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::agents::Agent;
 use crate::api::{ApiCommand, ApiResponse};
 use crate::messages::{
-    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType,
-    OrderExecutedPayload, OrderExecutionType, PositionLiquidatedPayload, PreviewRequestPayload,
-    PreviewResponsePayload, Side, SimulatorApi,
+    AgentId, CloseOrderPayload, MarketOrderPayload, Message, MessagePayload, MessageType, OrderExecutedPayload,
+    OrderExecutionType, PositionLiquidatedPayload, PreviewRequestPayload, PreviewResponsePayload, Side, SimulatorApi,
 };
 
-/// Initial balance for Human trader (in micro-USD = $10,000)
 const INITIAL_BALANCE: i128 = 10_000_000_000;
 
 pub struct HumanAgent {
     id: AgentId,
     name: String,
     exchange_id: AgentId,
+    address: Option<String>,
     command_rx: Receiver<ApiCommand>,
     response_tx: Sender<ApiResponse>,
     wake_interval_ns: u64,
@@ -36,6 +33,7 @@ impl HumanAgent {
         id: AgentId,
         name: String,
         exchange_id: AgentId,
+        address: Option<String>,
         command_rx: Receiver<ApiCommand>,
         response_tx: Sender<ApiResponse>,
         wake_interval_ms: u64,
@@ -45,6 +43,7 @@ impl HumanAgent {
             id,
             name,
             exchange_id,
+            address,
             command_rx,
             response_tx,
             wake_interval_ns: wake_interval_ms * 1_000_000,
@@ -87,11 +86,13 @@ impl HumanAgent {
         let side = match cmd.side.as_deref() {
             Some("long") | Some("buy") | Some("Long") | Some("Buy") => Side::Buy,
             Some("short") | Some("sell") | Some("Short") | Some("Sell") => Side::Sell,
-            _ => return ApiResponse {
-                success: false,
-                message: "side must be 'long' or 'short'".to_string(),
-                data: None,
-            },
+            _ => {
+                return ApiResponse {
+                    success: false,
+                    message: "side must be 'long' or 'short'".to_string(),
+                    data: None,
+                }
+            }
         };
 
         let qty = cmd.qty.unwrap_or(1.0);
@@ -126,11 +127,13 @@ impl HumanAgent {
     fn handle_close(&mut self, sim: &mut dyn SimulatorApi, cmd: &ApiCommand) -> ApiResponse {
         let side = match self.open_positions.get(&cmd.symbol) {
             Some(s) => *s,
-            None => return ApiResponse {
-                success: false,
-                message: format!("No open position for {}", cmd.symbol),
-                data: None,
-            },
+            None => {
+                return ApiResponse {
+                    success: false,
+                    message: format!("No open position for {}", cmd.symbol),
+                    data: None,
+                }
+            }
         };
 
         sim.send(
@@ -153,7 +156,9 @@ impl HumanAgent {
     }
 
     fn handle_status(&self) -> ApiResponse {
-        let positions: Vec<_> = self.open_positions.iter()
+        let positions: Vec<_> = self
+            .open_positions
+            .iter()
             .map(|(s, side)| serde_json::json!({"symbol": s, "side": format!("{:?}", side)}))
             .collect();
 
@@ -182,11 +187,13 @@ impl HumanAgent {
         let side = match cmd.side.as_deref() {
             Some("long") | Some("buy") | Some("Long") | Some("Buy") => Side::Buy,
             Some("short") | Some("sell") | Some("Short") | Some("Sell") => Side::Sell,
-            _ => return ApiResponse {
-                success: false,
-                message: "side must be 'long' or 'short'".to_string(),
-                data: None,
-            },
+            _ => {
+                return ApiResponse {
+                    success: false,
+                    message: "side must be 'long' or 'short'".to_string(),
+                    data: None,
+                }
+            }
         };
 
         let qty = cmd.qty.unwrap_or(1.0);
@@ -218,6 +225,10 @@ impl HumanAgent {
                     "entry_price": resp.entry_price,
                     "current_price": resp.current_price,
                     "liquidation_price": resp.liquidation_price,
+                    "funding_fee_usd": resp.funding_fee_usd,
+                    "borrowing_fee_usd": resp.borrowing_fee_usd,
+                    "price_impact_usd": resp.price_impact_usd,
+                    "close_fees_usd": resp.close_fees_usd,
                 })),
             },
             Err(_) => ApiResponse {
@@ -275,11 +286,24 @@ impl HumanAgent {
 }
 
 impl Agent for HumanAgent {
-    fn id(&self) -> AgentId { self.id }
-    fn name(&self) -> &str { &self.name }
+    fn id(&self) -> AgentId {
+        self.id
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn on_start(&mut self, sim: &mut dyn SimulatorApi) {
-        println!("[{}] ====== STARTED id={} balance=${:.2} ======", self.name, self.id, self.balance as f64 / 1_000_000.0);
+        println!(
+            "[{}] ====== STARTED id={} balance=${:.2}{} ======",
+            self.name,
+            self.id,
+            self.balance as f64 / 1_000_000.0,
+            self.address
+                .as_deref()
+                .map(|addr| format!(" addr={}", addr))
+                .unwrap_or_default()
+        );
         sim.wakeup(self.id, sim.now_ns() + self.wake_interval_ns);
     }
 
@@ -304,14 +328,23 @@ impl Agent for HumanAgent {
                 }
             }
             MessageType::PositionLiquidated => {
-                if let MessagePayload::PositionLiquidated(PositionLiquidatedPayload { symbol, side, pnl, collateral_lost, .. }) = &msg.payload {
+                if let MessagePayload::PositionLiquidated(PositionLiquidatedPayload {
+                    symbol,
+                    side,
+                    pnl,
+                    collateral_lost,
+                    ..
+                }) = &msg.payload
+                {
                     let side_str = match side {
                         Side::Buy => "LONG",
                         Side::Sell => "SHORT",
                     };
                     println!(
                         "[{}] ⚠️ LIQUIDATED {} {} pnl=${:.2} lost=${:.2}",
-                        self.name, symbol, side_str,
+                        self.name,
+                        symbol,
+                        side_str,
                         *pnl as f64 / 1_000_000.0,
                         *collateral_lost as f64 / 1_000_000.0
                     );
@@ -332,4 +365,3 @@ impl Agent for HumanAgent {
         }
     }
 }
-

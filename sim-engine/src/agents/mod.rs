@@ -10,7 +10,7 @@ pub mod oracle_agent;
 pub mod smart_trader_agent;
 
 pub use keeper_agent::{KeeperAgent, KeeperConfig};
-pub use limit_trader_agent::{LimitTraderAgent, LimitTraderConfig, LimitStrategy, OrderMode};
+pub use limit_trader_agent::{LimitStrategy, LimitTraderAgent, LimitTraderConfig, OrderMode};
 pub use market_maker_agent::{MarketMakerAgent, MarketMakerConfig};
 
 pub trait Agent {

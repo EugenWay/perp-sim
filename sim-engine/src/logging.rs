@@ -214,7 +214,7 @@ pub struct CsvMarketLogger {
 
 impl CsvMarketLogger {
     pub fn new<P: AsRef<Path>>(dir: P) -> std::io::Result<Self> {
-        let header = "ts,symbol,oi_long_usd,oi_short_usd,liquidity_usd";
+        let header = "ts,symbol,oi_long_usd,oi_short_usd,liquidity_usd,funding_rate_bps_hour_fp,borrowing_rate_bps_hour_fp";
         let file = open_csv_with_header(dir.as_ref(), "markets.csv", header)?;
         Ok(Self { file })
     }
@@ -228,11 +228,13 @@ impl EventListener for CsvMarketLogger {
             oi_long_usd,
             oi_short_usd,
             liquidity_usd,
+            funding_rate_bps_hour_fp,
+            borrowing_rate_bps_hour_fp,
         } = event
         {
             let line = format!(
-                "{},{},{},{},{}\n",
-                ts, symbol, oi_long_usd, oi_short_usd, liquidity_usd,
+                "{},{},{},{},{},{},{}\n",
+                ts, symbol, oi_long_usd, oi_short_usd, liquidity_usd, funding_rate_bps_hour_fp, borrowing_rate_bps_hour_fp,
             );
 
             if let Err(e) = self.file.write_all(line.as_bytes()) {

@@ -63,9 +63,10 @@ pub enum SimEvent {
         oi_long_usd: u64,
         oi_short_usd: u64,
         liquidity_usd: u64,
-        // TODO(perp-futures): need from engine
-        // funding_rate: f64,
-        // borrowing_rate: f64,
+        /// Funding rate per hour in bps * 1e6 (signed; + = longs pay, - = shorts pay)
+        funding_rate_bps_hour_fp: i64,
+        /// Borrowing rate per hour in bps * 1e6 (unsigned)
+        borrowing_rate_bps_hour_fp: u64,
     },
 
     /// Position was liquidated (explicit event for frontend/analytics)
