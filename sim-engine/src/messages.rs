@@ -166,6 +166,14 @@ pub struct PreviewResponsePayload {
     pub entry_price: u64,
     pub current_price: u64,
     pub liquidation_price: u64,
+    /// Funding fee preview in micro-USD (signed; + pay, - receive)
+    pub funding_fee_usd: i64,
+    /// Borrowing fee preview in micro-USD (unsigned)
+    pub borrowing_fee_usd: u64,
+    /// Price impact preview in micro-USD (signed; negative only in liq preview)
+    pub price_impact_usd: i64,
+    /// Close + liquidation fees in micro-USD (unsigned)
+    pub close_fees_usd: u64,
 }
 
 #[derive(Debug, Clone)]

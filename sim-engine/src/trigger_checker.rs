@@ -16,6 +16,7 @@ pub fn is_triggered(order: &PendingOrder, price: &Price) -> bool {
     )
 }
 
+#[allow(dead_code)]
 pub fn is_triggered_info(order: &PendingOrderInfo, price: &Price) -> bool {
     check_trigger_condition(
         order.execution_type,
@@ -62,15 +63,9 @@ fn check_trigger_condition(
 pub fn passes_slippage_check(order: &PendingOrder, execution_price: u64) -> bool {
     match order.payload.acceptable_price {
         None => true,
-        Some(acceptable) => {
-            match (order.payload.order_type, order.payload.side) {
-                (OrderType::Increase, Side::Buy) | (OrderType::Decrease, Side::Sell) => {
-                    execution_price <= acceptable
-                }
-                (OrderType::Increase, Side::Sell) | (OrderType::Decrease, Side::Buy) => {
-                    execution_price >= acceptable
-                }
-            }
-        }
+        Some(acceptable) => match (order.payload.order_type, order.payload.side) {
+            (OrderType::Increase, Side::Buy) | (OrderType::Decrease, Side::Sell) => execution_price <= acceptable,
+            (OrderType::Increase, Side::Sell) | (OrderType::Decrease, Side::Buy) => execution_price >= acceptable,
+        },
     }
 }
