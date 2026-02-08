@@ -1,26 +1,20 @@
 use crate::agents::Agent;
-use crate::events::SimEvent;
 use crate::messages::{
     AgentId, CloseOrderPayload, ExecutionType, KeeperRewardPayload, MarketOrderPayload, MarketStatePayload, Message,
-    MessagePayload, MessageType, OracleTickPayload, OrderExecutedPayload, OrderExecutionType, OrderId, OrderPayload,
-    OrderType as SimOrderType, PendingOrderInfo, PendingOrdersListPayload, PositionLiquidatedPayload,
+    MessagePayload, MessageType, OracleTickPayload, OrderId, OrderPayload,
+    OrderType as SimOrderType, PendingOrderInfo, PendingOrdersListPayload,
     PreviewRequestPayload, PreviewResponsePayload, Price, Side as SimSide, SimulatorApi,
 };
 use crate::pending_orders::{PendingOrder, PendingOrderStore};
 use crate::trigger_checker;
-use crate::vara::{Side as VaraSide, VaraClient};
-use perp_futures::executor::Executor;
-use perp_futures::oracle::Oracle;
-use perp_futures::services::BasicServicesBundle;
-use perp_futures::state::PositionKey;
-use perp_futures::state::State;
-use perp_futures::types::{
-    AccountId, AssetId, MarketId, OraclePrices, Order, OrderType, Side, SignedU256, Timestamp, Usd,
+use crate::vara::{
+    ActorId, ExecutionType as VaraExecutionType, OracleInput, OraclePrices, Order as VaraOrder,
+    OrderId as VaraOrderId, OrderType as VaraOrderType, PositionKey as VaraPositionKey,
+    Side as VaraSide, TxResult, VaraClient, u256_from_sails, u256_to_sails,
 };
+use std::collections::{HashMap, HashSet};
 use primitive_types::U256;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::io::{BufWriter, Write};
 use std::sync::Arc;
 
 // ==== Price Normalization ====
@@ -42,28 +36,6 @@ fn normalize_price_to_atom(micro_usd: u64, index_decimals: u32) -> U256 {
     // = micro_usd * 10^24 / 10^index_decimals
     let exp = 24u32.saturating_sub(index_decimals);
     U256::from(micro_usd) * U256::exp10(exp as usize)
-}
-
-/// Convert USD(1e30) per atom price back to micro-USD for display
-fn denormalize_price_from_atom(price_atom: U256, index_decimals: u32) -> u64 {
-    let exp = 24u32.saturating_sub(index_decimals);
-    let divisor = U256::exp10(exp as usize);
-    if divisor.is_zero() {
-        return 0;
-    }
-    (price_atom / divisor).low_u64()
-}
-
-/// Convert SignedU256 PnL from USD(1e30) to micro-USD for display
-fn pnl_to_micro_usd(pnl: SignedU256) -> i64 {
-    // USD(1e30) -> micro-USD: divide by 10^24
-    let divisor = U256::exp10(24);
-    let mag_micro = (pnl.mag / divisor).low_u64();
-    if pnl.is_negative {
-        -(mag_micro as i64)
-    } else {
-        mag_micro as i64
-    }
 }
 
 /// Convert USD(1e30) to micro-USD for display  
@@ -89,12 +61,10 @@ pub struct MarketConfig {
     pub collateral_decimals: u32, // Collateral decimals (USDT=6)
 }
 
-// ==== SimOracle: adapter for perp-futures Oracle trait ====
-
 #[derive(Clone)]
 struct PriceCache {
     /// Maps symbol -> (index_price_min, index_price_max) in USD(1e30) per atom
-    prices: HashMap<String, (Usd, Usd)>,
+    prices: HashMap<String, (U256, U256)>,
     /// Maps symbol -> index_decimals (needed for price normalization)
     decimals: HashMap<String, u32>,
 }
@@ -119,65 +89,12 @@ impl PriceCache {
         self.prices.insert(symbol.to_string(), (min_atom, max_atom));
     }
 
-    fn get(&self, symbol: &str) -> Option<(Usd, Usd)> {
+    fn get(&self, symbol: &str) -> Option<(U256, U256)> {
         self.prices.get(symbol).copied()
     }
-
-    fn get_decimals(&self, symbol: &str) -> u32 {
-        self.decimals.get(symbol).copied().unwrap_or(18)
-    }
 }
 
-/// Oracle implementation that reads prices from a shared cache
-pub struct SimOracle {
-    cache: Rc<RefCell<PriceCache>>,
-    market_symbols: HashMap<MarketId, String>,
-    /// Collateral price in USD(1e30) per atom
-    /// For USDC (6 decimals, $1): 1 * 10^30 / 10^6 = 10^24
-    collateral_price: Usd,
-}
-
-impl SimOracle {
-    fn new(cache: Rc<RefCell<PriceCache>>, markets: &[MarketConfig]) -> Self {
-        let mut market_symbols = HashMap::new();
-        for m in markets {
-            market_symbols.insert(MarketId(m.id), m.symbol.clone());
-        }
-
-        // Collateral (USDC-like, 6 decimals) at $1 per token
-        // USD(1e30) per atom = 1 * 10^30 / 10^6 = 10^24
-        let collateral_price = U256::exp10(24);
-
-        Self {
-            cache,
-            market_symbols,
-            collateral_price,
-        }
-    }
-}
-
-impl Oracle for SimOracle {
-    fn validate_and_get_prices(&self, market_id: MarketId) -> Result<OraclePrices, String> {
-        let symbol = self
-            .market_symbols
-            .get(&market_id)
-            .ok_or_else(|| format!("unknown_market_id:{:?}", market_id))?;
-
-        let cache = self.cache.borrow();
-        let (min, max) = cache
-            .get(symbol)
-            .ok_or_else(|| format!("no_price_for_symbol:{}", symbol))?;
-
-        Ok(OraclePrices {
-            index_price_min: min,
-            index_price_max: max,
-            collateral_price_min: self.collateral_price,
-            collateral_price_max: self.collateral_price,
-        })
-    }
-}
-
-// ==== ExchangeAgent with perp-futures Executor ====
+// ==== ExchangeAgent (on-chain only) ====
 
 pub struct ExchangeAgent {
     id: AgentId,
@@ -185,60 +102,44 @@ pub struct ExchangeAgent {
     markets: Vec<MarketConfig>,
     last_prices: HashMap<String, u64>,
 
-    executor: Executor<BasicServicesBundle, SimOracle>,
-    price_cache: Rc<RefCell<PriceCache>>,
-
-    accounts: HashMap<AgentId, AccountId>,
-    next_account_idx: u32,
-
-    symbol_to_market: HashMap<String, (MarketId, AssetId)>,
-    #[allow(dead_code)]
+    price_cache: PriceCache,
+    actor_ids: HashMap<AgentId, ActorId>,
+    symbols: HashSet<String>,
     symbol_decimals: HashMap<String, (u32, u32)>,
 
     pending_orders: PendingOrderStore,
     vara_client: Arc<VaraClient>,
     poll_interval_ns: u64,
+
+    /// Receiver for on-chain transaction results from VaraClient
+    tx_result_rx: Option<crossbeam_channel::Receiver<TxResult>>,
+    /// CSV writer for transaction results log
+    tx_csv_writer: Option<BufWriter<std::fs::File>>,
+
+    /// Channel for async OI sync results from background RPC
+    oi_sync_tx: crossbeam_channel::Sender<(i128, i128)>,
+    oi_sync_rx: crossbeam_channel::Receiver<(i128, i128)>,
+    /// Whether an OI fetch is currently in-flight
+    oi_sync_pending: bool,
 }
 
 impl ExchangeAgent {
-    pub fn new(id: AgentId, name: String, markets: Vec<MarketConfig>, vara_client: Arc<VaraClient>) -> Self {
-        let price_cache = Rc::new(RefCell::new(PriceCache::new()));
-
-        let mut state = State::default();
-        let mut symbol_to_market = HashMap::new();
+    pub fn new(
+        id: AgentId,
+        name: String,
+        markets: Vec<MarketConfig>,
+        vara_client: Arc<VaraClient>,
+        tx_result_rx: Option<crossbeam_channel::Receiver<TxResult>>,
+        logs_dir: Option<&str>,
+    ) -> Self {
+        let mut price_cache = PriceCache::new();
+        let mut symbols = HashSet::new();
         let mut symbol_decimals = HashMap::new();
 
-        for (idx, market_cfg) in markets.iter().enumerate() {
-            let market_id = MarketId(market_cfg.id);
-            let collateral_asset = AssetId(idx as u32 * 2);
-            let index_asset = AssetId(idx as u32 * 2 + 1);
+        for market_cfg in markets.iter() {
+            price_cache.set_decimals(&market_cfg.symbol, market_cfg.index_decimals);
 
-            price_cache
-                .borrow_mut()
-                .set_decimals(&market_cfg.symbol, market_cfg.index_decimals);
-
-            let collateral_atoms = U256::from(market_cfg.collateral_amount as u128)
-                * U256::exp10(market_cfg.collateral_decimals as usize)
-                / U256::exp10(6);
-            state
-                .pool_balances
-                .add_liquidity(market_id, collateral_asset, collateral_atoms);
-
-            state
-                .pool_balances
-                .add_liquidity(market_id, index_asset, U256::from(market_cfg.index_amount as u128));
-
-            let liquidity_usd_1e30 = U256::from(market_cfg.liquidity_usd as u128) * U256::exp10(24);
-            {
-                let market = state.markets.entry(market_id).or_default();
-                market.id = market_id;
-                market.index_token = index_asset;
-                market.long_asset = index_asset;
-                market.short_asset = collateral_asset;
-                market.liquidity_usd = liquidity_usd_1e30;
-            }
-
-            symbol_to_market.insert(market_cfg.symbol.clone(), (market_id, collateral_asset));
+            symbols.insert(market_cfg.symbol.clone());
             symbol_decimals.insert(
                 market_cfg.symbol.clone(),
                 (market_cfg.index_decimals, market_cfg.collateral_decimals),
@@ -253,74 +154,147 @@ impl ExchangeAgent {
             );
         }
 
-        let services = BasicServicesBundle::default();
-        let oracle = SimOracle::new(price_cache.clone(), &markets);
-        let executor = Executor::new(state, services, oracle);
+        // Create CSV writer for transaction results
+        let tx_csv_writer = logs_dir.and_then(|dir| {
+            let path = format!("{}/transactions.csv", dir);
+            match std::fs::File::create(&path) {
+                Ok(file) => {
+                    let mut writer = BufWriter::new(file);
+                    let _ = writeln!(writer, "agent_id,tx_type,success,order_id,error,detail");
+                    println!("[Exchange {}] Transaction log: {}", name, path);
+                    Some(writer)
+                }
+                Err(e) => {
+                    eprintln!("[Exchange {}] Failed to create {}: {}", name, path, e);
+                    None
+                }
+            }
+        });
+
+        let (oi_sync_tx, oi_sync_rx) = crossbeam_channel::unbounded();
 
         Self {
             id,
             name,
             markets,
             last_prices: HashMap::new(),
-            executor,
             price_cache,
-            accounts: HashMap::new(),
-            next_account_idx: 0,
-            symbol_to_market,
+            actor_ids: HashMap::new(),
+            symbols,
             symbol_decimals,
             pending_orders: PendingOrderStore::new(),
             vara_client,
             poll_interval_ns: 3_000_000_000,
+            tx_result_rx,
+            tx_csv_writer,
+            oi_sync_tx,
+            oi_sync_rx,
+            oi_sync_pending: false,
         }
     }
 
-    fn get_or_create_account(&mut self, agent_id: AgentId) -> AccountId {
-        *self.accounts.entry(agent_id).or_insert_with(|| {
-            let idx = self.next_account_idx;
-            self.next_account_idx += 1;
-            let mut bytes = [0u8; 32];
-            bytes[0..4].copy_from_slice(&idx.to_le_bytes());
-            AccountId(bytes)
-        })
-    }
-
-    fn convert_side(side: SimSide) -> Side {
-        match side {
-            SimSide::Buy => Side::Long,
-            SimSide::Sell => Side::Short,
+    fn get_or_create_actor(&mut self, agent_id: AgentId) -> Option<ActorId> {
+        if let Some(actor) = self.actor_ids.get(&agent_id) {
+            return Some(*actor);
         }
-    }
-
-    fn convert_side_back(side: Side) -> SimSide {
-        match side {
-            Side::Long => SimSide::Buy,
-            Side::Short => SimSide::Sell,
-        }
-    }
-
-    fn sync_from_chain(&mut self, sim: &mut dyn SimulatorApi) {
-        let positions = match self.vara_client.get_all_positions() {
-            Ok(list) => list,
+        match self.vara_client.get_actor_id(agent_id) {
+            Ok(actor) => {
+                self.actor_ids.insert(agent_id, actor);
+                Some(actor)
+            }
             Err(e) => {
-                eprintln!("[Exchange {}] Failed to fetch positions: {}", self.name, e);
+                eprintln!("[Exchange {}] Failed to get ActorId for {}: {}", self.name, agent_id, e);
+                None
+            }
+        }
+    }
+
+    fn convert_side_to_vara(side: SimSide) -> VaraSide {
+        match side {
+            SimSide::Buy => VaraSide::Long,
+            SimSide::Sell => VaraSide::Short,
+        }
+    }
+
+    fn build_oracle_input(&self, symbol: &str) -> Option<OracleInput> {
+        let (min, max) = self.price_cache.get(symbol)?;
+        let collateral_price = U256::exp10(24); // USDC $1 with 6 decimals
+        let prices = OraclePrices {
+            index_price_min: u256_to_sails(min),
+            index_price_max: u256_to_sails(max),
+            collateral_price_min: u256_to_sails(collateral_price),
+            collateral_price_max: u256_to_sails(collateral_price),
+        };
+        Some(OracleInput::DevPrices(prices))
+    }
+
+    /// Drain all pending transaction results from the channel.
+    /// Logs each to CSV and sends failure notifications back to agents.
+    fn drain_tx_results(&mut self, sim: &mut dyn SimulatorApi) {
+        let rx = match &self.tx_result_rx {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        while let Ok(result) = rx.try_recv() {
+            // Log to CSV
+            if let Some(writer) = &mut self.tx_csv_writer {
+                let oid = result.order_id.map(|id| id.to_string()).unwrap_or_default();
+                let err = result.error.as_deref().unwrap_or("");
+                let _ = writeln!(
+                    writer,
+                    "{},{},{},{},{},\"{}\"",
+                    result.agent_id, result.tx_type, result.success, oid, err, result.detail
+                );
+                let _ = writer.flush();
+            }
+
+            // Notify agent on failure
+            if !result.success {
+                let reason = result.error.as_deref().unwrap_or("unknown");
+                println!(
+                    "[Exchange {}] TX FAILED: agent={} {} — {}",
+                    self.name, result.agent_id, result.tx_type, reason
+                );
+                sim.send(
+                    self.id,
+                    result.agent_id,
+                    MessageType::OrderRejected,
+                    MessagePayload::Text(format!(
+                        "tx_type:{},order_id:{},error:{}",
+                        result.tx_type,
+                        result.order_id.unwrap_or(0),
+                        reason
+                    )),
+                );
+            }
+        }
+    }
+
+    /// Start an asynchronous OI fetch if none is already in-flight.
+    /// The RPC call runs on VaraClient's blocking thread pool; result arrives via oi_sync_rx.
+    fn start_oi_fetch(&mut self) {
+        if self.oi_sync_pending {
+            return; // previous fetch still running
+        }
+        self.vara_client.fetch_oi_async(self.oi_sync_tx.clone());
+        self.oi_sync_pending = true;
+    }
+
+    /// Drain completed OI sync results and broadcast MarketState to all agents.
+    /// Non-blocking: if no result is ready yet, this is a no-op.
+    fn drain_oi_sync(&mut self, sim: &mut dyn SimulatorApi) {
+        let (oi_long_usd, oi_short_usd) = match self.oi_sync_rx.try_recv() {
+            Ok(oi) => {
+                self.oi_sync_pending = false;
+                oi
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                eprintln!("[Exchange {}] OI sync channel disconnected", self.name);
                 return;
             }
         };
-
-        let mut oi_long_usd: i128 = 0;
-        let mut oi_short_usd: i128 = 0;
-
-        for position in positions.iter() {
-            if position.is_empty() {
-                continue;
-            }
-
-            let size_micro = usd_to_micro(position.size_usd) as i128;
-            match position.key.side {
-                VaraSide::Long => oi_long_usd += size_micro,
-                VaraSide::Short => oi_short_usd += size_micro,
-            }
-        }
 
         let symbol = match self.markets.first() {
             Some(m) => m.symbol.clone(),
@@ -339,516 +313,11 @@ impl ExchangeAgent {
         sim.broadcast(self.id, MessageType::MarketState, MessagePayload::MarketState(payload));
     }
 
-    fn funding_rate_bps_hour_fp(market: &perp_futures::state::MarketState) -> i64 {
-        let long_oi = market.oi_long_usd;
-        let short_oi = market.oi_short_usd;
-        if long_oi.is_zero() && short_oi.is_zero() {
-            return 0;
-        }
-        let sign = if long_oi > short_oi {
-            1i64
-        } else if short_oi > long_oi {
-            -1i64
-        } else {
-            0i64
-        };
-        if sign == 0 {
-            return 0;
-        }
-
-        // Match perp-futures funding.rs: DAILY_RATE_BPS = 1 (0.01% / day)
-        const DAILY_RATE_BPS: i64 = 1;
-        const FP: i64 = 1_000_000; // bps * 1e6
-        let hourly_fp = (DAILY_RATE_BPS * FP) / 24;
-        sign * hourly_fp
-    }
-
-    fn borrowing_rate_bps_hour_fp(market: &perp_futures::state::MarketState) -> u64 {
-        let borrowed = market.oi_long_usd.saturating_add(market.oi_short_usd);
-        let liquidity = market.liquidity_usd;
-        if liquidity.is_zero() {
-            return 0;
-        }
-
-        // Match perp-futures borrowing.rs: base=1 bps/day, slope=9 bps/day
-        const BASE_RATE_BPS_DAY: f64 = 1.0;
-        const SLOPE_RATE_BPS_DAY: f64 = 9.0;
-        const FP: f64 = 1_000_000.0; // bps * 1e6
-
-        let borrowed_f = borrowed.low_u128() as f64;
-        let liquidity_f = liquidity.low_u128() as f64;
-        if liquidity_f <= 0.0 {
-            return 0;
-        }
-        let util = (borrowed_f / liquidity_f).clamp(0.0, 1.0);
-        let rate_bps_day = BASE_RATE_BPS_DAY + SLOPE_RATE_BPS_DAY * util;
-        let rate_bps_hour = rate_bps_day / 24.0;
-        (rate_bps_hour * FP) as u64
-    }
-
-    /// Broadcast MarketState to all agents (for OI-based strategies)
-    fn broadcast_market_state(&self, sim: &mut dyn SimulatorApi) {
-        for market_cfg in &self.markets {
-            let market_id = MarketId(market_cfg.id);
-            if let Some(market) = self.executor.state.markets.get(&market_id) {
-                let payload = MessagePayload::MarketState(MarketStatePayload {
-                    symbol: market_cfg.symbol.clone(),
-                    oi_long_usd: usd_to_micro(market.oi_long_usd) as i128,
-                    oi_short_usd: usd_to_micro(market.oi_short_usd) as i128,
-                    liquidity_usd: usd_to_micro(market.liquidity_usd) as i128,
-                });
-                sim.broadcast(self.id, MessageType::MarketState, payload);
-            }
-        }
-    }
-
-    /// Emit market snapshots only (OI/liquidity) for UI updates
-    fn emit_market_snapshots_only(&self, sim: &mut dyn SimulatorApi, now_ns: u64) {
-        for market_cfg in &self.markets {
-            let market_id = MarketId(market_cfg.id);
-            if let Some(market) = self.executor.state.markets.get(&market_id) {
-                sim.emit_event(SimEvent::MarketSnapshot {
-                    ts: now_ns,
-                    symbol: market_cfg.symbol.clone(),
-                    oi_long_usd: usd_to_micro(market.oi_long_usd),
-                    oi_short_usd: usd_to_micro(market.oi_short_usd),
-                    liquidity_usd: usd_to_micro(market.liquidity_usd),
-                    funding_rate_bps_hour_fp: Self::funding_rate_bps_hour_fp(market),
-                    borrowing_rate_bps_hour_fp: Self::borrowing_rate_bps_hour_fp(market),
-                });
-            }
-        }
-    }
-
-    /// Emit snapshots for all positions and market state
-    /// Called on each oracle tick to track PnL evolution
-    /// Returns list of (agent_id, symbol, side) for liquidatable positions
-    fn emit_snapshots(&self, sim: &mut dyn SimulatorApi, now_ns: u64) -> Vec<(AgentId, String, Side)> {
-        // Reverse lookup: account_id -> agent_id
-        let account_to_agent: HashMap<AccountId, AgentId> =
-            self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
-
-        let now_sec = (now_ns / 1_000_000_000) as Timestamp;
-        let mut to_liquidate = Vec::new();
-
-        // Emit position snapshots
-        for (key, position) in self.executor.state.positions.iter() {
-            // Find symbol for this market
-            let symbol = self
-                .symbol_to_market
-                .iter()
-                .find(|(_, (mid, _))| *mid == key.market_id)
-                .map(|(s, _)| s.clone())
-                .unwrap_or_else(|| format!("UNKNOWN-{:?}", key.market_id));
-
-            let index_decimals = self.price_cache.borrow().get_decimals(&symbol);
-            let current_price_micro = self.last_prices.get(&symbol).copied().unwrap_or(0);
-
-            // Calculate entry price: size_usd / size_tokens
-            // Both are in USD(1e30), result is price per atom
-            let entry_price_atom = if !position.size_tokens.is_zero() {
-                position.size_usd / position.size_tokens
-            } else {
-                U256::zero()
-            };
-            let entry_price_micro = denormalize_price_from_atom(entry_price_atom, index_decimals);
-
-            // Calculate leverage: size_usd / (collateral_amount * collateral_price)
-            // collateral_price = 10^24 (for USDC at $1)
-            let collateral_usd = position.collateral_amount * U256::exp10(24);
-            let leverage = if !collateral_usd.is_zero() {
-                (position.size_usd / collateral_usd).low_u32().max(1)
-            } else {
-                1
-            };
-
-            // Use engine API for liquidation check and price
-            let (liquidatable, liq_price_micro, pnl_micro) =
-                match self.executor.is_liquidatable_by_margin(now_sec, *key) {
-                    Ok(preview) => {
-                        let liq_price = self
-                            .executor
-                            .calculate_liquidation_price(now_sec, *key)
-                            .unwrap_or(U256::zero());
-                        let liq_price_micro = denormalize_price_from_atom(liq_price, index_decimals);
-                        let pnl_micro = pnl_to_micro_usd(preview.pnl_usd);
-                        (preview.is_liquidatable, liq_price_micro, pnl_micro)
-                    }
-                    Err(_) => (false, 0u64, 0i64),
-                };
-
-            // Get agent_id from account
-            let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
-
-            // Convert USD(1e30) values to micro-USD for display
-            let size_usd_micro = usd_to_micro(position.size_usd);
-            let collateral_micro = (position.collateral_amount * U256::exp10(24) / U256::exp10(24)).low_u64(); // atoms to micro (simplified for $1 collateral)
-
-            sim.emit_event(SimEvent::PositionSnapshot {
-                ts: now_ns,
-                account: agent_id,
-                symbol: symbol.clone(),
-                side: Self::convert_side_back(key.side),
-                size_usd: size_usd_micro,
-                size_tokens: position.size_tokens.low_u128() as i128,
-                collateral: collateral_micro,
-                entry_price: entry_price_micro,
-                current_price: current_price_micro,
-                unrealized_pnl: pnl_micro,
-                liquidation_price: liq_price_micro,
-                leverage_actual: leverage,
-                is_liquidatable: liquidatable,
-                opened_at_sec: position.opened_at,
-            });
-
-            // Collect liquidatable positions (with grace period)
-            // Grace period: don't liquidate positions opened less than 10 seconds ago
-            const LIQUIDATION_GRACE_PERIOD_SEC: u64 = 10;
-            let position_age_sec = now_sec.saturating_sub(position.opened_at);
-            let past_grace_period = position_age_sec >= LIQUIDATION_GRACE_PERIOD_SEC;
-
-            if liquidatable && agent_id != 0 && past_grace_period {
-                to_liquidate.push((agent_id, symbol.clone(), key.side));
-                println!(
-                    "[Exchange {}] ⚠️ LIQUIDATABLE: {} {:?} agent={} size=${:.2} pnl=${:.2}",
-                    self.name,
-                    symbol,
-                    key.side,
-                    agent_id,
-                    size_usd_micro as f64 / 1_000_000.0,
-                    pnl_micro as f64 / 1_000_000.0,
-                );
-            } else if liquidatable && agent_id != 0 && !past_grace_period {
-                println!(
-                    "[Exchange {}] ⏳ GRACE PERIOD: {} {:?} agent={} ({}s remaining)",
-                    self.name,
-                    symbol,
-                    key.side,
-                    agent_id,
-                    LIQUIDATION_GRACE_PERIOD_SEC - position_age_sec,
-                );
-            }
-        }
-
-        // Emit market snapshots
-        self.emit_market_snapshots_only(sim, now_ns);
-
-        to_liquidate
-    }
-
-    /// Send liquidation notification to trader
-    fn notify_liquidation(
-        &self,
-        sim: &mut dyn SimulatorApi,
-        agent_id: AgentId,
-        symbol: String,
-        side: Side,
-        size_usd_micro: i64,
-        pnl_micro: i64,
-        collateral_micro: i64,
-    ) {
-        let sim_side = Self::convert_side_back(side);
-        let payload = MessagePayload::PositionLiquidated(PositionLiquidatedPayload {
-            symbol,
-            side: sim_side,
-            size_usd: size_usd_micro as i128,
-            pnl: pnl_micro as i128,
-            collateral_lost: collateral_micro as i128,
-        });
-        sim.send(self.id, agent_id, MessageType::PositionLiquidated, payload);
-    }
-
-    /// Execute liquidation for a position
-    /// This actually closes the position using the perp-futures engine
-    fn execute_liquidation(
-        &mut self,
-        sim: &mut dyn SimulatorApi,
-        agent_id: AgentId,
-        symbol: String,
-        side: Side,
-        now_ns: u64,
-    ) -> Result<(), String> {
-        let now = (now_ns / 1_000_000_000) as Timestamp;
-
-        // Get account for this agent
-        let account = match self.accounts.get(&agent_id) {
-            Some(acc) => *acc,
-            None => return Err(format!("Agent {} has no account", agent_id)),
-        };
-
-        // Get market info
-        let (market_id, collateral_asset) = match self.symbol_to_market.get(&symbol) {
-            Some((mid, cid)) => (*mid, *cid),
-            None => return Err(format!("Unknown symbol: {}", symbol)),
-        };
-
-        // Get position key
-        let key = PositionKey {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
-            side,
-        };
-
-        // Get position to liquidate
-        let position = match self.executor.state.positions.get(&key) {
-            Some(pos) => pos.clone(),
-            None => return Err("No position found for liquidation".into()),
-        };
-
-        // Get detailed liquidation info from engine
-        let (pnl_micro, _liquidation_preview) = match self.executor.is_liquidatable_by_margin(now, key) {
-            Ok(preview) => {
-                let pnl = pnl_to_micro_usd(preview.pnl_usd);
-                println!(
-                    "[Exchange {}] 🔍 LIQUIDATION PREVIEW for {} agent={} side={:?}:",
-                    self.name, symbol, agent_id, side
-                );
-                println!("  ├─ RAW PNL from engine: {:?}", preview.pnl_usd);
-                println!("  ├─ PNL in micro-USD: ${:.2}", pnl as f64 / 1_000_000.0);
-                println!("  ├─ is_liquidatable: {}", preview.is_liquidatable);
-                println!(
-                    "  ├─ collateral_value_usd: ${:.2}",
-                    usd_to_micro(preview.collateral_value_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  ├─ price_impact_usd: ${:.2}",
-                    pnl_to_micro_usd(preview.price_impact_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  ├─ borrowing_fee_usd: ${:.2}",
-                    usd_to_micro(preview.borrowing_fee_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  ├─ funding_fee_usd: ${:.2}",
-                    pnl_to_micro_usd(preview.funding_fee_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  ├─ close_fees_usd: ${:.2}",
-                    usd_to_micro(preview.close_fees_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  ├─ equity_usd: ${:.2}",
-                    pnl_to_micro_usd(preview.equity_usd) as f64 / 1_000_000.0
-                );
-                println!(
-                    "  └─ required_usd: ${:.2}",
-                    usd_to_micro(preview.required_usd) as f64 / 1_000_000.0
-                );
-                (pnl, Some(preview))
-            }
-            Err(e) => {
-                println!(
-                    "[Exchange {}] ⚠️  Could not get liquidation preview: {:?}",
-                    self.name, e
-                );
-                (0, None)
-            }
-        };
-
-        let size_usd_micro = usd_to_micro(position.size_usd) as i64;
-        let collateral_micro = position.collateral_amount.low_u64() as i64;
-        let current_price_micro = self.last_prices.get(&symbol).copied().unwrap_or(0);
-
-        // Get liquidation price from engine
-        let liq_price_micro = match self.executor.calculate_liquidation_price(now, key) {
-            Ok(liq_price_atom) => {
-                let (index_decimals, _collateral_decimals) =
-                    self.symbol_decimals.get(&symbol).copied().unwrap_or((18, 6));
-                denormalize_price_from_atom(liq_price_atom, index_decimals)
-            }
-            Err(_) => 0,
-        };
-
-        // Calculate leverage (size_usd in USD(1e30) / collateral_amount in atoms)
-        // For USDC (6 decimals), 1 atom = 1 micro-USD
-        // So collateral in USD = collateral_amount * 1e-6 (in actual USD)
-        // size_usd is in USD(1e30), so size in actual USD = size_usd / 1e30
-        // leverage = (size_usd / 1e30) / (collateral_amount * 1e-6)
-        //          = size_usd / (collateral_amount * 1e24)
-        let leverage_calc = if !position.collateral_amount.is_zero() {
-            let denominator = position.collateral_amount * U256::exp10(24);
-            if !denominator.is_zero() {
-                (position.size_usd / denominator).low_u64()
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        println!(
-            "[Exchange {}] 🔥 EXECUTING LIQUIDATION: {} {:?} agent={}",
-            self.name, symbol, side, agent_id
-        );
-        println!(
-            "  ├─ Position size: ${:.2} (raw: {})",
-            size_usd_micro as f64 / 1_000_000.0,
-            position.size_usd
-        );
-        println!(
-            "  ├─ Collateral: ${:.2} (raw: {} atoms)",
-            collateral_micro as f64 / 1_000_000.0,
-            position.collateral_amount
-        );
-        println!("  ├─ PnL: ${:.2}", pnl_micro as f64 / 1_000_000.0);
-        println!("  ├─ Current price: ${:.2}", current_price_micro as f64 / 1_000_000.0);
-        println!("  ├─ Liquidation price: ${:.2}", liq_price_micro as f64 / 1_000_000.0);
-        println!("  └─ Calculated Leverage: {}x", leverage_calc);
-
-        // Create liquidation order using OrderType::Liquidation
-        let perp_order = Order {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
-            side,
-            order_type: OrderType::Liquidation,
-            collateral_delta_tokens: U256::zero(),
-            size_delta_usd: position.size_usd, // Close full position
-            withdraw_collateral_amount: U256::zero(),
-            target_leverage_x: 0,
-            created_at: now,
-            valid_from: now,
-            valid_until: now + 3600,
-        };
-
-        let order_id = self.executor.submit_order(perp_order);
-
-        match self.executor.execute_order(now, order_id) {
-            Ok(()) => {
-                println!(
-                    "[Exchange {}] ✅ LIQUIDATION EXECUTED: {} agent={} side={:?}",
-                    self.name, symbol, agent_id, side
-                );
-
-                // Emit liquidation execution event
-                sim.emit_event(SimEvent::OrderExecuted {
-                    ts: now_ns,
-                    account: agent_id,
-                    symbol: symbol.clone(),
-                    side: Self::convert_side_back(side),
-                    size_usd: size_usd_micro as u64,
-                    collateral: collateral_micro as u64,
-                    execution_price: current_price_micro,
-                    leverage: 0,
-                    order_type: "Liquidation".to_string(),
-                    pnl: pnl_micro,
-                });
-
-                // Emit specific liquidation event for detailed analytics
-                sim.emit_event(SimEvent::PositionLiquidated {
-                    ts: now_ns,
-                    account: agent_id,
-                    symbol: symbol.clone(),
-                    side: Self::convert_side_back(side),
-                    size_usd: size_usd_micro as u64,
-                    collateral_lost: collateral_micro as u64,
-                    pnl: pnl_micro,
-                    liquidation_price: current_price_micro,
-                });
-
-                // Send notification to trader
-                self.notify_liquidation(sim, agent_id, symbol, side, size_usd_micro, pnl_micro, collateral_micro);
-
-                // Emit fresh market snapshot for UI updates
-                self.emit_market_snapshots_only(sim, now_ns);
-                // Broadcast updated market state after liquidation
-                self.broadcast_market_state(sim);
-
-                Ok(())
-            }
-            Err(e) => {
-                let err_msg = format!("Liquidation execution failed: {:?}", e);
-                println!("[Exchange {}] ❌ {}", self.name, err_msg);
-                Err(err_msg)
-            }
-        }
-    }
-
-    /// Scan for liquidatable positions and execute liquidations
-    fn process_liquidation_scan(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
-        // Get list of positions to liquidate
-        let to_liquidate = self.get_liquidatable_positions(now_ns);
-
-        if to_liquidate.is_empty() {
-            return;
-        }
-
-        println!(
-            "[Exchange {}] 🔍 Found {} positions to liquidate",
-            self.name,
-            to_liquidate.len()
-        );
-
-        // Execute liquidation for each underwater position
-        for (agent_id, symbol, side) in to_liquidate {
-            match self.execute_liquidation(sim, agent_id, symbol.clone(), side, now_ns) {
-                Ok(()) => {
-                    println!(
-                        "[Exchange {}] Liquidated: agent={} {} {:?}",
-                        self.name, agent_id, symbol, side
-                    );
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[Exchange {}] Failed to liquidate agent={} {} {:?}: {}",
-                        self.name, agent_id, symbol, side, e
-                    );
-                }
-            }
-        }
-    }
-
-    /// Get list of liquidatable positions using engine API
-    /// Returns list of (agent_id, symbol, side)
-    fn get_liquidatable_positions(&self, now_ns: u64) -> Vec<(AgentId, String, Side)> {
-        let now_sec = (now_ns / 1_000_000_000) as Timestamp;
-
-        // Reverse lookup: account_id -> agent_id
-        let account_to_agent: HashMap<AccountId, AgentId> =
-            self.accounts.iter().map(|(agent, acc)| (*acc, *agent)).collect();
-
-        let mut to_liquidate = Vec::new();
-
-        // Grace period: don't liquidate positions opened less than 10 seconds ago
-        const LIQUIDATION_GRACE_PERIOD_SEC: u64 = 10;
-
-        // Check all positions using engine API
-        for (key, position) in self.executor.state.positions.iter() {
-            // Find symbol for this market
-            let symbol = self
-                .symbol_to_market
-                .iter()
-                .find(|(_, (mid, _))| *mid == key.market_id)
-                .map(|(s, _)| s.clone())
-                .unwrap_or_else(|| format!("UNKNOWN-{:?}", key.market_id));
-
-            // Check grace period
-            let position_age_sec = now_sec.saturating_sub(position.opened_at);
-            if position_age_sec < LIQUIDATION_GRACE_PERIOD_SEC {
-                continue; // Skip - still in grace period
-            }
-
-            // Use engine API to check if liquidatable
-            let liquidatable = match self.executor.is_liquidatable_by_margin(now_sec, *key) {
-                Ok(preview) => preview.is_liquidatable,
-                Err(_) => false,
-            };
-
-            // Get agent_id from account
-            let agent_id = account_to_agent.get(&key.account).copied().unwrap_or(0);
-
-            // Collect liquidatable positions (excluding exchange itself)
-            if liquidatable && agent_id != 0 {
-                to_liquidate.push((agent_id, symbol, key.side));
-            }
-        }
-
-        to_liquidate
-    }
+    /// On-chain liquidations are handled by keepers/contract — no-op here.
+    fn process_liquidation_scan(&mut self, _sim: &mut dyn SimulatorApi, _now_ns: u64) {}
 
     fn validate_order(&self, order: &OrderPayload) -> Result<(), String> {
-        if !self.symbol_to_market.contains_key(&order.symbol) {
+        if !self.symbols.contains(&order.symbol) {
             return Err(format!("unknown symbol: {}", order.symbol));
         }
 
@@ -912,12 +381,97 @@ impl ExchangeAgent {
         }
 
         // Add to pending orders
-        let order_id = self.pending_orders.insert(from, order.clone(), now_ns);
+        let actor = match self.get_or_create_actor(from) {
+            Some(a) => a,
+            None => return,
+        };
+        let now_sec: u64 = now_ns / 1_000_000_000;
+
+        let (index_decimals, collateral_decimals) =
+            self.symbol_decimals.get(&order.symbol).copied().unwrap_or((18, 6));
+
+        let current_price_micro = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
+
+        let (collateral_atoms, size_usd_1e30, target_leverage_x) = match order.order_type {
+            SimOrderType::Increase => {
+                let qty = order.qty.unwrap_or(0.0);
+                let leverage = order.leverage.unwrap_or(5).max(1);
+                let size_micro = (qty * current_price_micro as f64) as u64;
+                let collateral_micro = size_micro / leverage as u64;
+
+                let collateral_atoms = if collateral_decimals >= 6 {
+                    U256::from(collateral_micro) * U256::exp10((collateral_decimals - 6) as usize)
+                } else {
+                    U256::from(collateral_micro) / U256::exp10((6 - collateral_decimals) as usize)
+                };
+                let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
+                (u256_to_sails(collateral_atoms), u256_to_sails(size_usd_1e30), leverage)
+            }
+            SimOrderType::Decrease => {
+                let size_micro = if let Some(size) = order.size_delta_usd {
+                    size
+                } else {
+                    let side = Self::convert_side_to_vara(order.side);
+                    let position_key = VaraPositionKey { account: actor, side };
+                    match self.vara_client.get_position(&position_key) {
+                        Ok(Some(p)) => usd_to_micro(u256_from_sails(p.size_usd)),
+                        _ => 0,
+                    }
+                };
+                let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
+                (u256_to_sails(U256::zero()), u256_to_sails(size_usd_1e30), 0)
+            }
+        };
+
+        let trigger_price = order
+            .trigger_price
+            .map(|p| u256_to_sails(normalize_price_to_atom(p, index_decimals)));
+        let acceptable_price = order
+            .acceptable_price
+            .map(|p| u256_to_sails(normalize_price_to_atom(p, index_decimals)));
+
+        let execution_type = match order.execution_type {
+            ExecutionType::Market => VaraExecutionType::Market,
+            ExecutionType::Limit => VaraExecutionType::Limit,
+            ExecutionType::StopLoss => VaraExecutionType::StopLoss,
+            ExecutionType::TakeProfit => VaraExecutionType::TakeProfit,
+        };
+
+        let order_type = match order.order_type {
+            SimOrderType::Increase => VaraOrderType::Increase,
+            SimOrderType::Decrease => VaraOrderType::Decrease,
+        };
+
+        let valid_for = order.valid_for_sec.unwrap_or(3600);
+
+        let onchain_order = VaraOrder {
+            account: actor,
+            side: Self::convert_side_to_vara(order.side),
+            order_type,
+            execution_type,
+            collateral_delta_tokens: collateral_atoms,
+            size_delta_usd: size_usd_1e30,
+            trigger_price,
+            acceptable_price,
+            withdraw_collateral_amount: u256_to_sails(U256::zero()),
+            target_leverage_x,
+            created_at: now_sec,
+            valid_from: now_sec,
+            valid_until: now_sec + valid_for,
+        };
+
+        // Fire-and-forget: submit limit/stop/TP order to chain
+        if let Err(e) = self.vara_client.submit_order(from, &onchain_order) {
+            eprintln!(
+                "[Exchange {}] SubmitOrder failed from {}: {}",
+                self.name, from, e
+            );
+            return;
+        }
 
         println!(
-            "[Exchange {}] PENDING #{} from={} {:?} {:?} trigger=${:.2}",
+            "[Exchange {}] SUBMITTED LIMIT from={} {:?} {:?} trigger=${:.2}",
             self.name,
-            order_id,
             from,
             order.execution_type,
             order.side,
@@ -928,7 +482,7 @@ impl ExchangeAgent {
             self.id,
             from,
             MessageType::OrderPending,
-            MessagePayload::Text(format!("order_id:{}", order_id)),
+            MessagePayload::Text("order submitted on-chain".to_string()),
         );
     }
 
@@ -945,24 +499,29 @@ impl ExchangeAgent {
         }
     }
 
-    fn execute_triggered_order(&mut self, sim: &mut dyn SimulatorApi, order: &PendingOrder, now_ns: u64) {
-        match order.payload.order_type {
-            SimOrderType::Increase => {
-                let market_order = MarketOrderPayload {
-                    symbol: order.payload.symbol.clone(),
-                    side: order.payload.side,
-                    qty: order.payload.qty.unwrap_or(0.0),
-                    leverage: order.payload.leverage.unwrap_or(5),
-                };
-                self.process_market_order(sim, order.owner, &market_order, now_ns);
+    fn execute_triggered_order(&mut self, keeper_id: AgentId, order: &PendingOrder) {
+        let oracle_input = match self.build_oracle_input(&order.payload.symbol) {
+            Some(input) => input,
+            None => {
+                eprintln!(
+                    "[Exchange {}] ExecuteOrder: no oracle price for {}",
+                    self.name, order.payload.symbol
+                );
+                return;
             }
-            SimOrderType::Decrease => {
-                let close_order = CloseOrderPayload {
-                    symbol: order.payload.symbol.clone(),
-                    side: order.payload.side,
-                };
-                self.process_close_order(sim, order.owner, &close_order, now_ns);
-            }
+        };
+
+        let order_id = VaraOrderId(order.id);
+        if let Err(e) = self.vara_client.execute_order(keeper_id, order_id, &oracle_input) {
+            eprintln!(
+                "[Exchange {}] ExecuteOrder failed id={} by keeper {}: {}",
+                self.name, order.id, keeper_id, e
+            );
+        } else {
+            println!(
+                "[Exchange {}] ON-CHAIN EXECUTE #{} by keeper {}",
+                self.name, order.id, keeper_id
+            );
         }
     }
 
@@ -1012,7 +571,7 @@ impl ExchangeAgent {
         sim: &mut dyn SimulatorApi,
         keeper_id: AgentId,
         order_id: OrderId,
-        now_ns: u64,
+        _now_ns: u64,
     ) {
         // 1. Check order exists
         let order = match self.pending_orders.get(order_id) {
@@ -1056,7 +615,7 @@ impl ExchangeAgent {
                 self.name, keeper_id, order_id, removed_order.payload.execution_type, removed_order.payload.side
             );
 
-            self.execute_triggered_order(sim, &removed_order, now_ns);
+            self.execute_triggered_order(keeper_id, &removed_order);
 
             // 4. Send reward (0.1% of size)
             let size_micro =
@@ -1077,198 +636,105 @@ impl ExchangeAgent {
 
     fn process_close_order(
         &mut self,
-        sim: &mut dyn SimulatorApi,
+        _sim: &mut dyn SimulatorApi,
         from: AgentId,
         order: &CloseOrderPayload,
         now_ns: u64,
     ) {
-        let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
-            Some(m) => *m,
-            None => {
-                println!(
-                    "[Exchange {}] CLOSE REJECTED from {}: unknown symbol {}",
-                    self.name, from, order.symbol
-                );
-                return;
-            }
+        if !self.symbols.contains(&order.symbol) {
+            println!(
+                "[Exchange {}] CLOSE REJECTED from {}: unknown symbol {}",
+                self.name, from, order.symbol
+            );
+            return;
+        }
+
+        let actor = match self.get_or_create_actor(from) {
+            Some(a) => a,
+            None => return,
         };
+        let side = Self::convert_side_to_vara(order.side);
+        let now_sec: u64 = now_ns / 1_000_000_000;
 
-        let account = self.get_or_create_account(from);
-        let side = Self::convert_side(order.side);
-
-        // Find the position
-        let position_key = PositionKey {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
-            side,
-        };
-
-        let position = match self.executor.state.positions.get(&position_key) {
-            Some(p) => p.clone(),
-            None => {
+        let position_key = VaraPositionKey { account: actor, side: side.clone() };
+        let position = match self.vara_client.get_position(&position_key) {
+            Ok(Some(p)) if !p.size_usd.is_zero() => p,
+            Ok(_) => {
                 println!(
                     "[Exchange {}] CLOSE REJECTED from {}: no {:?} position for {}",
                     self.name, from, order.side, order.symbol
                 );
                 return;
             }
-        };
-
-        let now: Timestamp = now_ns / 1_000_000_000;
-        let execution_price = self.last_prices.get(&order.symbol).copied().unwrap_or(0);
-
-        // Calculate PnL before closing using engine's liquidation preview
-        let pnl_micro = match self.executor.is_liquidatable_by_margin(now, position_key) {
-            Ok(preview) => {
-                let pnl = pnl_to_micro_usd(preview.pnl_usd);
-                println!(
-                    "[Exchange {}] CLOSE PnL preview: is_neg={} pnl_micro={}",
-                    self.name, preview.pnl_usd.is_negative, pnl
-                );
-                pnl
-            }
             Err(e) => {
-                println!("[Exchange {}] CLOSE PnL error: {:?}", self.name, e);
-                0
+                eprintln!("[Exchange {}] CLOSE query failed: {}", self.name, e);
+                return;
             }
         };
 
-        // Create decrease order for full position size
-        // Note: withdraw_collateral_amount = 0 lets the executor calculate the correct payout
-        // after accounting for PnL, fees, etc.
-        let perp_order = Order {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
+        let onchain_order = VaraOrder {
+            account: actor,
             side,
-            order_type: OrderType::Decrease,
-            collateral_delta_tokens: U256::zero(),
-            size_delta_usd: position.size_usd,        // Close full position
-            withdraw_collateral_amount: U256::zero(), // Executor will calculate payout
+            order_type: VaraOrderType::Decrease,
+            execution_type: VaraExecutionType::Market,
+            collateral_delta_tokens: u256_to_sails(U256::zero()),
+            size_delta_usd: position.size_usd,
+            trigger_price: None,
+            acceptable_price: None,
+            withdraw_collateral_amount: u256_to_sails(U256::zero()),
             target_leverage_x: 0,
-            created_at: now,
-            valid_from: now,
-            valid_until: now + 3600,
+            created_at: now_sec,
+            valid_from: now_sec,
+            valid_until: now_sec + 3600,
         };
 
-        let order_id = self.executor.submit_order(perp_order);
-
-        // Convert to micro-USD for display
-        let size_usd_micro = usd_to_micro(position.size_usd);
-        let collateral_micro = position.collateral_amount.low_u64();
-
-        match self.executor.execute_order(now, order_id) {
-            Ok(()) => {
-                println!(
-                    "[Exchange {}] CLOSED {} from={} side={:?} size=${:.2}",
-                    self.name,
-                    order.symbol,
-                    from,
-                    order.side,
-                    size_usd_micro as f64 / 1_000_000.0
-                );
-
-                println!(
-                    "[Exchange {}] CLOSE PnL: ${:.2} (collateral returned: ${:.2})",
-                    self.name,
-                    pnl_micro as f64 / 1_000_000.0,
-                    collateral_micro as f64 / 1_000_000.0
-                );
-
-                // Emit execution event
-                sim.emit_event(SimEvent::OrderExecuted {
-                    ts: now_ns,
-                    account: from,
-                    symbol: order.symbol.clone(),
-                    side: order.side,
-                    size_usd: size_usd_micro,
-                    collateral: collateral_micro,
-                    execution_price,
-                    leverage: 0, // N/A for close
-                    order_type: "Decrease".to_string(),
-                    pnl: pnl_micro,
-                });
-
-                println!(
-                    "[Exchange {}] Emitted OrderExecuted from={} pnl={}",
-                    self.name, from, pnl_micro
-                );
-
-                // Send message to agent with execution details
-                // On close: collateral is returned (negative delta), include PnL
-                sim.send(
-                    self.id,
-                    from,
-                    MessageType::OrderExecuted,
-                    MessagePayload::OrderExecuted(OrderExecutedPayload {
-                        symbol: order.symbol.clone(),
-                        side: order.side,
-                        order_type: OrderExecutionType::Decrease,
-                        collateral_delta: -(collateral_micro as i128), // Returned
-                        pnl: pnl_micro as i128,
-                        size_usd: size_usd_micro as i128,
-                    }),
-                );
-
-                println!(
-                    "[Exchange {}] CLOSE PnL: ${:.2} (collateral returned: ${:.2})",
-                    self.name,
-                    pnl_micro as f64 / 1_000_000.0,
-                    collateral_micro as f64 / 1_000_000.0
-                );
-
-                if let Some(market) = self.executor.state.markets.get(&market_id) {
-                    println!(
-                        "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
-                        self.name,
-                        order.symbol,
-                        usd_to_micro(market.oi_long_usd) as f64 / 1_000_000.0,
-                        usd_to_micro(market.oi_short_usd) as f64 / 1_000_000.0
-                    );
-                }
-
-                // Emit fresh market snapshot for UI updates
-                self.emit_market_snapshots_only(sim, now_ns);
-                // Broadcast updated market state after close
-                self.broadcast_market_state(sim);
-            }
-            Err(e) => {
-                println!(
-                    "[Exchange {}] CLOSE REJECTED {} from={} error={}",
-                    self.name, order.symbol, from, e
-                );
-            }
-        }
-    }
-
-    fn process_market_order(
-        &mut self,
-        sim: &mut dyn SimulatorApi,
-        from: AgentId,
-        order: &MarketOrderPayload,
-        now_ns: u64,
-    ) {
-        let (market_id, collateral_asset) = match self.symbol_to_market.get(&order.symbol) {
-            Some(m) => *m,
+        // Build oracle input before spawning
+        let oracle_input = match self.build_oracle_input(&order.symbol) {
+            Some(oi) => oi,
             None => {
-                println!(
-                    "[Exchange {}] REJECTED from {}: unknown symbol {}",
-                    self.name, from, order.symbol
+                eprintln!(
+                    "[Exchange {}] no oracle input for {}, skipping close order",
+                    self.name, order.symbol
                 );
                 return;
             }
         };
 
+        println!(
+            "[Exchange {}] ON-CHAIN CLOSE {} from={} side={:?}",
+            self.name, order.symbol, from, order.side
+        );
+
+        // Fire-and-forget: submit + execute runs in background
+        if let Err(e) = self.vara_client.submit_and_execute_order_async(from, onchain_order, oracle_input) {
+            eprintln!(
+                "[Exchange {}] submit_and_execute_order_async(close) failed {} from={}: {}",
+                self.name, order.symbol, from, e
+            );
+        }
+    }
+
+    fn process_market_order(
+        &mut self,
+        _sim: &mut dyn SimulatorApi,
+        from: AgentId,
+        order: &MarketOrderPayload,
+        now_ns: u64,
+    ) {
+        if !self.symbols.contains(&order.symbol) {
+            println!(
+                "[Exchange {}] REJECTED from {}: unknown symbol {}",
+                self.name, from, order.symbol
+            );
+            return;
+        }
+
         // Get decimals for proper conversion
         let (_index_decimals, collateral_decimals) =
             self.symbol_decimals.get(&order.symbol).copied().unwrap_or((18, 6));
 
-        let account = self.get_or_create_account(from);
-        let side = Self::convert_side(order.side);
-
         // Verify we have oracle prices
-        if self.price_cache.borrow().get(&order.symbol).is_none() {
+        if self.price_cache.get(&order.symbol).is_none() {
             println!(
                 "[Exchange {}] REJECTED from {}: no price for {}",
                 self.name, from, order.symbol
@@ -1276,7 +742,12 @@ impl ExchangeAgent {
             return;
         }
 
-        let now: Timestamp = now_ns / 1_000_000_000;
+        let now_sec: u64 = now_ns / 1_000_000_000;
+        let actor = match self.get_or_create_actor(from) {
+            Some(a) => a,
+            None => return,
+        };
+        let side = Self::convert_side_to_vara(order.side);
 
         // order.qty = number of tokens as f64 (e.g., 0.5 = 0.5 ETH, 2.0 = 2 ETH)
         // Get current price in micro-USD
@@ -1302,106 +773,50 @@ impl ExchangeAgent {
         // Convert size to USD(1e30) for engine
         let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
 
-        let perp_order = Order {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
+        let onchain_order = VaraOrder {
+            account: actor,
             side,
-            order_type: OrderType::Increase,
-            collateral_delta_tokens: collateral_atoms,
-            size_delta_usd: size_usd_1e30, // Explicit size in USD(1e30)
-            withdraw_collateral_amount: U256::zero(),
+            order_type: VaraOrderType::Increase,
+            execution_type: VaraExecutionType::Market,
+            collateral_delta_tokens: u256_to_sails(collateral_atoms),
+            size_delta_usd: u256_to_sails(size_usd_1e30),
+            trigger_price: None,
+            acceptable_price: None,
+            withdraw_collateral_amount: u256_to_sails(U256::zero()),
             target_leverage_x: order.leverage.max(1),
-            created_at: now,
-            valid_from: now,
-            valid_until: now + 3600,
+            created_at: now_sec,
+            valid_from: now_sec,
+            valid_until: now_sec + 3600,
         };
 
-        let order_id = self.executor.submit_order(perp_order);
-
-        match self.executor.execute_order(now, order_id) {
-            Ok(()) => {
-                // Get actual position to report correct values
-                let position_key = PositionKey {
-                    account,
-                    market_id,
-                    collateral_token: collateral_asset,
-                    side,
-                };
-
-                let (size_usd_micro, coll_micro_actual) =
-                    if let Some(pos) = self.executor.state.positions.get(&position_key) {
-                        let size_m = usd_to_micro(pos.size_usd);
-                        // collateral_amount is in atoms (USDC 6 decimals = already micro scale)
-                        let coll_m = pos.collateral_amount.low_u64();
-                        (size_m, coll_m)
-                    } else {
-                        // Fallback (shouldn't happen): estimate from order
-                        (size_micro, collateral_micro)
-                    };
-
-                println!(
-                    "[Exchange {}] EXECUTED {} from={} side={:?} collateral=${:.2} size=${:.2} leverage={}x",
-                    self.name,
-                    order.symbol,
-                    from,
-                    order.side,
-                    coll_micro_actual as f64 / 1_000_000.0,
-                    size_usd_micro as f64 / 1_000_000.0,
-                    order.leverage
+        // Build oracle input before spawning
+        let oracle_input = match self.build_oracle_input(&order.symbol) {
+            Some(oi) => oi,
+            None => {
+                eprintln!(
+                    "[Exchange {}] no oracle input for {}, skipping market order",
+                    self.name, order.symbol
                 );
-
-                // Emit execution event
-                sim.emit_event(SimEvent::OrderExecuted {
-                    ts: now_ns,
-                    account: from,
-                    symbol: order.symbol.clone(),
-                    side: order.side,
-                    size_usd: size_usd_micro,
-                    collateral: coll_micro_actual,
-                    execution_price: current_price_micro,
-                    leverage: order.leverage,
-                    order_type: "Increase".to_string(),
-                    pnl: 0, // No PnL on open
-                });
-
-                // Send message to agent with execution details
-                // On open: collateral is locked (positive delta)
-                sim.send(
-                    self.id,
-                    from,
-                    MessageType::OrderExecuted,
-                    MessagePayload::OrderExecuted(OrderExecutedPayload {
-                        symbol: order.symbol.clone(),
-                        side: order.side,
-                        order_type: OrderExecutionType::Increase,
-                        collateral_delta: coll_micro_actual as i128, // Locked
-                        pnl: 0,
-                        size_usd: size_usd_micro as i128,
-                    }),
-                );
-
-                if let Some(market) = self.executor.state.markets.get(&market_id) {
-                    println!(
-                        "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
-                        self.name,
-                        order.symbol,
-                        usd_to_micro(market.oi_long_usd) as f64 / 1_000_000.0,
-                        usd_to_micro(market.oi_short_usd) as f64 / 1_000_000.0
-                    );
-                }
-
-                // Emit fresh market snapshot for UI updates
-                self.emit_market_snapshots_only(sim, now_ns);
-                // Broadcast updated market state after open
-                self.broadcast_market_state(sim);
+                return;
             }
-            Err(e) => {
-                println!(
-                    "[Exchange {}] REJECTED {} from={} error={}",
-                    self.name, order.symbol, from, e
-                );
-            }
+        };
+
+        println!(
+            "[Exchange {}] ON-CHAIN MARKET {} from={} side={:?} size=${:.2} leverage={}x",
+            self.name,
+            order.symbol,
+            from,
+            order.side,
+            size_micro as f64 / 1_000_000.0,
+            order.leverage
+        );
+
+        // Fire-and-forget: submit + execute runs in background, does NOT block the kernel
+        if let Err(e) = self.vara_client.submit_and_execute_order_async(from, onchain_order, oracle_input) {
+            eprintln!(
+                "[Exchange {}] submit_and_execute_order_async failed {} from={}: {}",
+                self.name, order.symbol, from, e
+            );
         }
     }
 
@@ -1412,9 +827,10 @@ impl ExchangeAgent {
         req: PreviewRequestPayload,
         now_ns: u64,
     ) {
-        let mut response = PreviewResponsePayload {
+        let _ = now_ns;
+        let response = PreviewResponsePayload {
             success: false,
-            message: "preview_failed".to_string(),
+            message: "preview not supported (on-chain only)".to_string(),
             symbol: req.symbol.clone(),
             side: req.side,
             qty: req.qty,
@@ -1429,168 +845,6 @@ impl ExchangeAgent {
             price_impact_usd: 0,
             close_fees_usd: 0,
         };
-
-        let (market_id, collateral_asset) = match self.symbol_to_market.get(&req.symbol) {
-            Some(m) => *m,
-            None => {
-                response.message = format!("unknown symbol: {}", req.symbol);
-                sim.send(
-                    self.id,
-                    from,
-                    MessageType::PreviewResponse,
-                    MessagePayload::PreviewResponse(response),
-                );
-                return;
-            }
-        };
-
-        if self.price_cache.borrow().get(&req.symbol).is_none() {
-            response.message = format!("no price for {}", req.symbol);
-            sim.send(
-                self.id,
-                from,
-                MessageType::PreviewResponse,
-                MessagePayload::PreviewResponse(response),
-            );
-            return;
-        }
-
-        let (index_decimals, collateral_decimals) = self.symbol_decimals.get(&req.symbol).copied().unwrap_or((18, 6));
-
-        let current_price_micro = self.last_prices.get(&req.symbol).copied().unwrap_or(0);
-        if current_price_micro == 0 {
-            response.message = "current price unavailable".to_string();
-            sim.send(
-                self.id,
-                from,
-                MessageType::PreviewResponse,
-                MessagePayload::PreviewResponse(response),
-            );
-            return;
-        }
-
-        if req.qty <= 0.0 {
-            response.message = "qty must be > 0".to_string();
-            sim.send(
-                self.id,
-                from,
-                MessageType::PreviewResponse,
-                MessagePayload::PreviewResponse(response),
-            );
-            return;
-        }
-
-        let leverage = req.leverage.max(1) as u64;
-        let size_micro = (req.qty * current_price_micro as f64) as u64;
-        let collateral_micro = size_micro / leverage;
-
-        let collateral_atoms = if collateral_decimals >= 6 {
-            U256::from(collateral_micro) * U256::exp10((collateral_decimals - 6) as usize)
-        } else {
-            U256::from(collateral_micro) / U256::exp10((6 - collateral_decimals) as usize)
-        };
-
-        let size_usd_1e30 = U256::from(size_micro) * U256::exp10(24);
-        let side = Self::convert_side(req.side);
-        let account = self.get_or_create_account(from);
-        let now_sec: Timestamp = now_ns / 1_000_000_000;
-
-        let oracle = SimOracle::new(self.price_cache.clone(), &self.markets);
-        let mut preview_executor = Executor::new(self.executor.state.clone(), BasicServicesBundle::default(), oracle);
-
-        let perp_order = Order {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
-            side,
-            order_type: OrderType::Increase,
-            collateral_delta_tokens: collateral_atoms,
-            size_delta_usd: size_usd_1e30,
-            withdraw_collateral_amount: U256::zero(),
-            target_leverage_x: req.leverage.max(1),
-            created_at: now_sec,
-            valid_from: now_sec,
-            valid_until: now_sec + 3600,
-        };
-
-        let order_id = preview_executor.submit_order(perp_order);
-        if let Err(e) = preview_executor.execute_order(now_sec, order_id) {
-            response.message = format!("preview execute failed: {:?}", e);
-            sim.send(
-                self.id,
-                from,
-                MessageType::PreviewResponse,
-                MessagePayload::PreviewResponse(response),
-            );
-            return;
-        }
-
-        let position_key = PositionKey {
-            account,
-            market_id,
-            collateral_token: collateral_asset,
-            side,
-        };
-
-        let position = match preview_executor.state.positions.get(&position_key) {
-            Some(pos) => pos,
-            None => {
-                response.message = "preview position not found".to_string();
-                sim.send(
-                    self.id,
-                    from,
-                    MessageType::PreviewResponse,
-                    MessagePayload::PreviewResponse(response),
-                );
-                return;
-            }
-        };
-
-        let preview = match preview_executor.is_liquidatable_by_margin(now_sec, position_key) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                response.message = format!("preview liquidation failed: {:?}", e);
-                None
-            }
-        };
-
-        let entry_price_atom = if !position.size_tokens.is_zero() {
-            position.size_usd / position.size_tokens
-        } else {
-            U256::zero()
-        };
-        let entry_price_micro = denormalize_price_from_atom(entry_price_atom, index_decimals);
-
-        let liq_price_micro = match preview_executor.calculate_liquidation_price(now_sec, position_key) {
-            Ok(liq_price_atom) => denormalize_price_from_atom(liq_price_atom, index_decimals),
-            Err(e) => {
-                response.message = format!("liquidation price calc failed: {:?}", e);
-                sim.send(
-                    self.id,
-                    from,
-                    MessageType::PreviewResponse,
-                    MessagePayload::PreviewResponse(response),
-                );
-                return;
-            }
-        };
-
-        let size_usd_micro = usd_to_micro(position.size_usd) as i128;
-        let collateral_micro_actual = position.collateral_amount.low_u64() as i128;
-
-        response.success = true;
-        response.message = "ok".to_string();
-        response.size_usd = size_usd_micro;
-        response.collateral = collateral_micro_actual;
-        response.entry_price = entry_price_micro;
-        response.current_price = current_price_micro;
-        response.liquidation_price = liq_price_micro;
-        if let Some(p) = preview {
-            response.funding_fee_usd = pnl_to_micro_usd(p.funding_fee_usd);
-            response.borrowing_fee_usd = usd_to_micro(p.borrowing_fee_usd);
-            response.price_impact_usd = pnl_to_micro_usd(p.price_impact_usd);
-            response.close_fees_usd = usd_to_micro(p.close_fees_usd);
-        }
 
         sim.send(
             self.id,
@@ -1616,28 +870,14 @@ impl Agent for ExchangeAgent {
     }
 
     fn on_wakeup(&mut self, sim: &mut dyn SimulatorApi, now_ns: u64) {
-        self.sync_from_chain(sim);
+        self.drain_tx_results(sim);
+        self.drain_oi_sync(sim);    // non-blocking: process result if ready
+        self.start_oi_fetch();       // kick off next async RPC fetch
         sim.wakeup(self.id, now_ns + self.poll_interval_ns);
     }
 
     fn on_stop(&mut self, _sim: &mut dyn SimulatorApi) {
-        let pos_count = self.executor.state.positions.iter().count();
-        println!("[Exchange {}] === FINAL STATE ===", self.name);
-
-        for market_cfg in &self.markets {
-            let market_id = MarketId(market_cfg.id);
-            if let Some(market) = self.executor.state.markets.get(&market_id) {
-                // Convert from USD(1e30) to human-readable USD
-                let oi_long = usd_to_micro(market.oi_long_usd) as f64 / 1_000_000.0;
-                let oi_short = usd_to_micro(market.oi_short_usd) as f64 / 1_000_000.0;
-                println!(
-                    "[Exchange {}] {} OI: long=${:.2} short=${:.2}",
-                    self.name, market_cfg.symbol, oi_long, oi_short
-                );
-            }
-        }
-
-        println!("[Exchange {}] Total positions: {}", self.name, pos_count);
+        println!("[Exchange {}] stopped", self.name);
     }
 
     fn on_message(&mut self, sim: &mut dyn SimulatorApi, msg: &Message) {
@@ -1650,16 +890,13 @@ impl Agent for ExchangeAgent {
                     signature: _,
                 }) = &msg.payload
                 {
-                    if self.symbol_to_market.contains_key(symbol) {
-                        self.price_cache.borrow_mut().update(symbol, price.min, price.max);
+                    if self.symbols.contains(symbol) {
+                        self.price_cache.update(symbol, price.min, price.max);
                         let mid_price = (price.min + price.max) / 2;
                         self.last_prices.insert(symbol.clone(), mid_price);
 
                         let now_ns = sim.now_ns();
-                        let _liquidatable = self.emit_snapshots(sim, now_ns);
-                        self.broadcast_market_state(sim);
-
-                        // Keeper'ы сами проверяют триггеры, тут только cleanup
+                        // sync_from_chain runs on wakeup every poll_interval — no need to duplicate here
                         self.cleanup_expired_orders(sim, now_ns);
                     }
                 }
