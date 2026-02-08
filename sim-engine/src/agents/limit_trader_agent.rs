@@ -729,6 +729,14 @@ impl Agent for LimitTraderAgent {
                     }
                 }
             }
+            MessageType::OrderRejected => {
+                // On-chain tx failed — clear pending state so we can retry
+                if self.pending_entry_order.is_some() {
+                    eprintln!("[{}] OrderRejected — clearing pending entry", self.name);
+                    self.pending_entry_order = None;
+                    self.pending_entry_side = None;
+                }
+            }
             MessageType::OrderCancelled => {
                 if let MessagePayload::Text(text) = &msg.payload {
                     if text.contains("order_id:") {

@@ -993,6 +993,23 @@ impl Agent for SmartTraderAgent {
                     }
                 }
             }
+            MessageType::OrderRejected => {
+                // On-chain tx failed — roll back optimistic local state
+                if self.has_position && self.collateral_in_position > 0 {
+                    eprintln!(
+                        "[{}] OrderRejected — rolling back optimistic state (bal was ${:.0})",
+                        self.name,
+                        self.balance as f64 / 1_000_000.0
+                    );
+                    self.balance += self.collateral_in_position;
+                    self.collateral_in_position = 0;
+                    self.has_position = false;
+                    self.position_side = None;
+                    self.entry_price = None;
+                    self.pending_sl_order_id = None;
+                    self.pending_tp_order_id = None;
+                }
+            }
             MessageType::OrderTriggered | MessageType::OrderCancelled => {
                 // SL/TP was triggered or cancelled - position state already handled
             }

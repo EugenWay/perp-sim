@@ -349,6 +349,17 @@ impl Agent for MarketMakerAgent {
                     }
                 }
             }
+            MessageType::OrderRejected => {
+                // On-chain tx failed — reverse collateral lock
+                // We don't know exact side/amount, so unlock conservatively
+                if self.collateral_locked > 0 {
+                    let price = self.current_price.unwrap_or(1_000_000) as f64;
+                    let size_usd = (self.order_size_tokens * price) as i128;
+                    let collateral = size_usd / self.leverage as i128;
+                    self.collateral_locked = (self.collateral_locked - collateral).max(0);
+                    eprintln!("[MM {}] OrderRejected — released ${:.0} collateral", self.name, collateral as f64 / 1_000_000.0);
+                }
+            }
             _ => {}
         }
     }
