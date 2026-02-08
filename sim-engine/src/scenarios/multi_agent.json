@@ -8,12 +8,14 @@
     "markets": [
       {
         "id": 0,
-        "symbol": "BTC-USD",
-        "index_token": "BTC",
+        "symbol": "ETH-USD",
+        "index_token": "ETH",
+        "index_decimals": 18,
         "collateral_token": "USDT",
+        "collateral_decimals": 6,
         "initial_liquidity": {
           "collateral_amount": 5000000000000,
-          "index_amount": 100000000000,
+          "index_amount": 100000000000000000000,
           "liquidity_usd": 10000000000000
         }
       }
@@ -22,19 +24,11 @@
   "oracles": [
     {
       "id": 2,
-      "name": "PythOracle_Main",
-      "symbols": ["BTC-USD", "ETH-USD", "SOL-USD"],
+      "name": "PythOracle",
+      "symbols": ["ETH-USD"],
       "provider": "Pyth",
       "cache_duration_ms": 5000,
       "wake_interval_ms": 3000
-    },
-    {
-      "id": 3,
-      "name": "PythOracle_Stables",
-      "symbols": ["USDT-USD"],
-      "provider": "Pyth",
-      "cache_duration_ms": 30000,
-      "wake_interval_ms": 10000
     }
   ]
 }

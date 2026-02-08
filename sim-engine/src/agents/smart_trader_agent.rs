@@ -1,8 +1,8 @@
 use crate::agents::Agent;
 use crate::messages::{
-    AgentId, CloseOrderPayload, ExecutionType, MarketOrderPayload, MarketStatePayload, Message,
-    MessagePayload, MessageType, OrderPayload, OrderType, OracleTickPayload, OrderExecutedPayload,
-    OrderExecutionType, PositionLiquidatedPayload, Side, SimulatorApi,
+    AgentId, CloseOrderPayload, ExecutionType, MarketOrderPayload, MarketStatePayload, Message, MessagePayload,
+    MessageType, OracleTickPayload, OrderExecutedPayload, OrderExecutionType, OrderPayload, OrderType,
+    PositionLiquidatedPayload, Side, SimulatorApi,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::VecDeque;
@@ -88,6 +88,7 @@ pub struct SmartTraderConfig {
     pub name: String,
     pub exchange_id: AgentId,
     pub symbol: String,
+    pub address: Option<String>,
     pub strategy: TradingStrategy,
     pub qty_min: f64,
     pub qty_max: f64,
@@ -102,6 +103,7 @@ pub struct SmartTraderAgent {
     name: String,
     exchange_id: AgentId,
     symbol: String,
+    address: Option<String>,
     strategy: TradingStrategy,
     qty_min: f64,
     qty_max: f64,
@@ -131,7 +133,7 @@ pub struct SmartTraderAgent {
     total_pnl: i128,
 
     skipped_due_to_oi: u32,
-    
+
     pending_sl_order_id: Option<u64>,
     pending_tp_order_id: Option<u64>,
     use_conditional_sl_tp: bool,
@@ -150,6 +152,7 @@ impl SmartTraderAgent {
             name: config.name,
             exchange_id: config.exchange_id,
             symbol: config.symbol,
+            address: config.address,
             strategy: config.strategy,
             qty_min: config.qty_min,
             qty_max: config.qty_max.max(config.qty_min),
@@ -176,6 +179,10 @@ impl SmartTraderAgent {
             pending_tp_order_id: None,
             use_conditional_sl_tp: true,
         }
+    }
+
+    pub fn set_address(&mut self, address: String) {
+        self.address = Some(address);
     }
 
     fn random_qty(&self, now_ns: u64) -> f64 {
@@ -314,11 +321,10 @@ impl SmartTraderAgent {
     }
 
     fn open_position(&mut self, sim: &mut dyn SimulatorApi, side: Side, now_ns: u64) {
-        // NEW: OI safety check
+        // OI safety check
         let (is_safe, reason) = self.is_safe_to_open(side, now_ns);
         if !is_safe {
             self.skipped_due_to_oi += 1;
-            // Log occasionally
             if self.skipped_due_to_oi <= 3 || self.skipped_due_to_oi % 20 == 0 {
                 println!(
                     "[{}] SKIP {} - {} (OI: L=${:.0}k S=${:.0}k, imb={:.1}%)",
@@ -357,13 +363,6 @@ impl SmartTraderAgent {
             return;
         }
 
-        let payload = MessagePayload::MarketOrder(MarketOrderPayload {
-            symbol: self.symbol.clone(),
-            side,
-            qty: qty_tokens,
-            leverage,
-        });
-
         println!(
             "[{}] OPEN {} {}x qty={:.3} @ ${:.2} (OI: L=${:.0}k S=${:.0}k)",
             self.name,
@@ -375,8 +374,20 @@ impl SmartTraderAgent {
             self.oi_short_usd as f64 / 1_000_000_000.0
         );
 
-        sim.send(self.id, self.exchange_id, MessageType::MarketOrder, payload);
+        // Send MarketOrder message to Exchange (no blockchain knowledge)
+        sim.send(
+            self.id,
+            self.exchange_id,
+            MessageType::MarketOrder,
+            MessagePayload::MarketOrder(MarketOrderPayload {
+                symbol: self.symbol.clone(),
+                side,
+                qty: qty_tokens,
+                leverage,
+            }),
+        );
 
+        // Local tracking (will be updated on OrderExecuted)
         self.balance -= collateral_needed;
         self.collateral_in_position = collateral_needed;
         self.has_position = true;
@@ -386,14 +397,9 @@ impl SmartTraderAgent {
         self.trades_opened += 1;
     }
 
-    fn close_position(&mut self, sim: &mut dyn SimulatorApi, reason: &str, now_ns: u64) {
+    fn close_position(&mut self, sim: &mut dyn SimulatorApi, reason: &str, _now_ns: u64) {
         if let Some(side) = self.position_side {
             let pnl_pct = self.calculate_pnl_pct().unwrap_or(0.0);
-
-            let payload = MessagePayload::CloseOrder(CloseOrderPayload {
-                symbol: self.symbol.clone(),
-                side,
-            });
 
             println!(
                 "[{}] CLOSE {} ({}) pnl={:+.2}%",
@@ -403,12 +409,22 @@ impl SmartTraderAgent {
                 pnl_pct
             );
 
-            sim.send(self.id, self.exchange_id, MessageType::CloseOrder, payload);
+            // Send CloseOrder message to Exchange (no blockchain knowledge)
+            sim.send(
+                self.id,
+                self.exchange_id,
+                MessageType::CloseOrder,
+                MessagePayload::CloseOrder(CloseOrderPayload {
+                    symbol: self.symbol.clone(),
+                    side,
+                }),
+            );
 
+            // Local tracking (will be finalized on OrderExecuted)
             self.has_position = false;
             self.position_side = None;
             self.entry_price = None;
-            self.last_close_at = now_ns;
+            self.last_close_at = sim.now_ns();
             self.trades_closed += 1;
             self.pending_sl_order_id = None;
             self.pending_tp_order_id = None;
@@ -417,19 +433,27 @@ impl SmartTraderAgent {
 
     fn submit_sl_tp_orders(&mut self, sim: &mut dyn SimulatorApi, entry_price: u64) {
         let (sl_pct, tp_pct) = match &self.strategy {
-            TradingStrategy::Hodler { stop_loss_pct, take_profit_pct, .. } => {
-                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
-            }
-            TradingStrategy::Institutional { stop_loss_pct, take_profit_pct, .. } => {
-                (*stop_loss_pct, *take_profit_pct)
-            }
-            TradingStrategy::TrendFollower { stop_loss_pct, take_profit_pct, .. } => {
-                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
-            }
+            TradingStrategy::Hodler {
+                stop_loss_pct,
+                take_profit_pct,
+                ..
+            } => (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0)),
+            TradingStrategy::Institutional {
+                stop_loss_pct,
+                take_profit_pct,
+                ..
+            } => (*stop_loss_pct, *take_profit_pct),
+            TradingStrategy::TrendFollower {
+                stop_loss_pct,
+                take_profit_pct,
+                ..
+            } => (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0)),
             TradingStrategy::MeanReversion { .. } => (0.0, 0.0),
-            TradingStrategy::Arbitrageur { stop_loss_pct, take_profit_pct, .. } => {
-                (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0))
-            }
+            TradingStrategy::Arbitrageur {
+                stop_loss_pct,
+                take_profit_pct,
+                ..
+            } => (stop_loss_pct.unwrap_or(0.0), take_profit_pct.unwrap_or(0.0)),
             TradingStrategy::FundingHarvester { stop_loss_pct, .. } => (*stop_loss_pct, 0.0),
         };
 
@@ -500,7 +524,7 @@ impl SmartTraderAgent {
                 self.balance += self.collateral_in_position;
                 self.balance -= actual;
                 self.collateral_in_position = actual;
-                
+
                 if self.use_conditional_sl_tp {
                     if let Some(price) = self.current_price {
                         self.submit_sl_tp_orders(sim, price);
@@ -885,18 +909,26 @@ impl Agent for SmartTraderAgent {
         let delay_ms = self.start_delay_ns / 1_000_000;
         if delay_ms > 0 {
             println!(
-                "[{}] START {} bal=${:.0} (delayed {}ms)",
+                "[{}] START {} bal=${:.0}{} (delayed {}ms)",
                 self.name,
                 strategy,
                 self.balance as f64 / 1_000_000.0,
+                self.address
+                    .as_deref()
+                    .map(|addr| format!(" addr={}", addr))
+                    .unwrap_or_default(),
                 delay_ms
             );
         } else {
             println!(
-                "[{}] START {} bal=${:.0}",
+                "[{}] START {} bal=${:.0}{}",
                 self.name,
                 strategy,
-                self.balance as f64 / 1_000_000.0
+                self.balance as f64 / 1_000_000.0,
+                self.address
+                    .as_deref()
+                    .map(|addr| format!(" addr={}", addr))
+                    .unwrap_or_default()
             );
         }
 
@@ -959,6 +991,23 @@ impl Agent for SmartTraderAgent {
                             }
                         }
                     }
+                }
+            }
+            MessageType::OrderRejected => {
+                // On-chain tx failed — roll back optimistic local state
+                if self.has_position && self.collateral_in_position > 0 {
+                    eprintln!(
+                        "[{}] OrderRejected — rolling back optimistic state (bal was ${:.0})",
+                        self.name,
+                        self.balance as f64 / 1_000_000.0
+                    );
+                    self.balance += self.collateral_in_position;
+                    self.collateral_in_position = 0;
+                    self.has_position = false;
+                    self.position_side = None;
+                    self.entry_price = None;
+                    self.pending_sl_order_id = None;
+                    self.pending_tp_order_id = None;
                 }
             }
             MessageType::OrderTriggered | MessageType::OrderCancelled => {

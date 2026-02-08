@@ -1,0 +1,212 @@
+type InitConfig = struct {
+  funding_cfg: FundingConfig,
+  borrowing_cfg: BorrowingConfig,
+  impact_cfg: ImpactRebalanceConfig,
+  oracle_cfg: OracleConfig,
+  risk_cfg: RiskCfg,
+  liq_cfg: LiquidationFeeCfg,
+};
+
+type FundingConfig = struct {
+  /// BPS per day (1 = 0.01%/day)
+  daily_rate_bps: u64,
+};
+
+type BorrowingConfig = struct {
+  /// base bps/day (1 = 0.01%/day)
+  base_rate_per_day_bps: u64,
+  /// slope bps/day at util=1
+  slope_per_day_bps: u64,
+};
+
+/// Config for impact curve and factors.
+/// All factors are fixed-point with scale = fp_scale().
+type ImpactRebalanceConfig = struct {
+  /// Exponent "e" in d^e (e.g. 1, 2, 3).
+  impact_exponent: u32,
+  /// Same-side impact factor when balance improves.
+  /// (helpful trades)  — fp-scaled.
+  same_side_positive_factor_fp: u256,
+  /// Same-side impact factor when balance worsens.
+  /// (harmful trades) — fp-scaled.
+  same_side_negative_factor_fp: u256,
+  /// Cross-over positive factor (applied to initial diff).
+  crossover_positive_factor_fp: u256,
+  /// Cross-over negative factor (applied to next diff).
+  crossover_negative_factor_fp: u256,
+};
+
+/// Configuration for oracle validation policy.
+/// In dev mode, you typically set `mode = DevProvided`.
+type OracleConfig = struct {
+  mode: OracleMode,
+  /// Max allowed age of the price (seconds). Used in signed mode later.
+  max_age_secs: u64,
+  /// Trusted signer pubkey (ed25519 32 bytes). Used in signed mode later.
+  signer_pubkey: [u8, 32],
+};
+
+type OracleMode = enum {
+  /// Dev/test: accept raw prices without signature verification.
+  DevProvided,
+  /// Prod (sync): accept signed payloads (verification to be implemented).
+  Signed,
+};
+
+/// Protocol-level risk constraints.
+type RiskCfg = struct {
+  /// Remaining positions below this size are treated as dust and should be fully closed.
+  /// USD(1e30)
+  min_position_size_usd: u256,
+  /// Absolute minimum collateral required for a position to remain open.
+  /// USD(1e30)
+  min_collateral_usd: u256,
+  /// Maintenance margin factor vs position notional (fraction in FP(1e18)).
+  /// 
+  /// Interpretation:
+  ///   required_collateral_usd >= size_usd * min_collateral_factor_fp / factor_scale
+  /// 
+  /// Example: max leverage 50x -> maintenance factor ~ 1/50 = 0.02.
+  min_collateral_factor_fp: u256,
+  /// Fixed-point scale used by `min_collateral_factor_fp`.
+  factor_scale: u256,
+};
+
+/// Fee config for liquidation preview.
+type LiquidationFeeCfg = struct {
+  /// Position/close fee (bps). E.g. 10 = 0.10%.
+  close_position_fee_bps: u32,
+  /// Additional liquidation fee (bps). E.g. 50 = 0.50%.
+  liquidation_fee_bps: u32,
+};
+
+type OrderId = struct {
+  u64,
+};
+
+type OracleInput = enum {
+  DevPrices: OraclePrices,
+  Signed: SignedOraclePrices,
+};
+
+type OraclePrices = struct {
+  index_price_min: u256,
+  index_price_max: u256,
+  collateral_price_min: u256,
+  collateral_price_max: u256,
+};
+
+/// Minimal envelope for future signed oracle payloads (stub for now).
+/// 
+/// NOTE: signature verification is intentionally not implemented yet.
+type SignedOraclePrices = struct {
+  /// Domain separator / version tag (e.g. *b"PERPSOR1").
+  domain: [u8, 8],
+  /// Intended receiver program id (anti cross-contract replay).
+  program_id: actor_id,
+  /// Optional market id if you have multiple markets.
+  market_id: u32,
+  /// Actual prices payload.
+  prices: OraclePrices,
+  /// Signature bytes (ed25519 64 bytes).
+  signature: [u8, 64],
+};
+
+type Order = struct {
+  account: actor_id,
+  side: Side,
+  order_type: OrderType,
+  execution_type: ExecutionType,
+  collateral_delta_tokens: u256,
+  size_delta_usd: u256,
+  /// Trigger price for Limit/StopLoss/TakeProfit orders.
+  /// For Market orders this must be None.
+  trigger_price: opt u256,
+  /// Optional slippage guard (highly recommended for Market execution).
+  acceptable_price: opt u256,
+  /// withdraw collateral tokens while partially closing.
+  /// This is independent from size_delta_usd and can increase leverage if not guarded.
+  withdraw_collateral_amount: u256,
+  /// Target leverage X for this step, e.g. 5 means 5x.
+  target_leverage_x: u32,
+  created_at: u64,
+  valid_from: u64,
+  valid_until: u64,
+};
+
+type Side = enum {
+  Long,
+  Short,
+};
+
+type OrderType = enum {
+  Increase,
+  Decrease,
+  Liquidation,
+};
+
+type ExecutionType = enum {
+  /// Executes immediately (no price trigger).
+  Market,
+  /// Executes only if the limit condition is satisfied.
+  Limit,
+  /// Triggered decrease order: protect downside.
+  StopLoss,
+  /// Triggered decrease order: lock profit.
+  TakeProfit,
+};
+
+type PositionKey = struct {
+  account: actor_id,
+  side: Side,
+};
+
+type Position = struct {
+  key: PositionKey,
+  size_usd: u256,
+  size_tokens: u256,
+  collateral_amount: u256,
+  pending_impact_tokens: SignedU256,
+  funding_index: SignedU256,
+  borrowing_index: u256,
+  opened_at: u64,
+  last_updated_at: u64,
+};
+
+type SignedU256 = struct {
+  is_negative: bool,
+  mag: u256,
+};
+
+type LiquidationPreview = struct {
+  collateral_value_usd: u256,
+  pnl_usd: SignedU256,
+  price_impact_usd: SignedU256,
+  borrowing_fee_usd: u256,
+  funding_fee_usd: SignedU256,
+  close_fees_usd: u256,
+  equity_usd: SignedU256,
+  required_usd: u256,
+  is_liquidatable: bool,
+};
+
+constructor {
+  Create : (cfg: InitConfig, collateral_token_id: actor_id);
+};
+
+service VaraPerps {
+  AddLiquidity : (amount: u256) -> null;
+  CancelOrder : (order_id: OrderId) -> null;
+  Deposit : (amount: u256) -> null;
+  ExecuteOrder : (order_id: OrderId, oracle_input: OracleInput) -> null;
+  SubmitOrder : (order: Order) -> OrderId;
+  Withdraw : (amount: u256) -> null;
+  query BalanceOf : (account: actor_id) -> u256;
+  query CalculateLiquidationPrice : (key: PositionKey, oracle_input: OracleInput) -> u256;
+  query GetAllPositions : () -> vec Position;
+  query GetClaimable : (account: actor_id) -> u256;
+  query GetOrder : (order_id: OrderId) -> opt Order;
+  query GetPendingOrders : () -> vec Order;
+  query GetPosition : (key: PositionKey) -> opt Position;
+  query IsLiquidatableByMargin : (key: PositionKey, oracle_input: OracleInput) -> LiquidationPreview;
+};

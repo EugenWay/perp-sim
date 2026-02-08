@@ -18,19 +18,6 @@
           "index_amount": 3000000000000000000000,
           "liquidity_usd": 100000000000000
         }
-      },
-      {
-        "id": 1,
-        "symbol": "BTC-USD",
-        "index_token": "BTC",
-        "index_decimals": 8,
-        "collateral_token": "USDT",
-        "collateral_decimals": 6,
-        "initial_liquidity": {
-          "collateral_amount": 6000000000000000,
-          "index_amount": 120000000000,
-          "liquidity_usd": 120000000000000
-        }
       }
     ]
   },
@@ -38,18 +25,20 @@
     {
       "id": 2,
       "name": "PythOracle",
-      "symbols": ["ETH-USD", "BTC-USD"],
+      "symbols": [
+        "ETH-USD"
+      ],
       "provider": "Pyth",
       "cache_duration_ms": 1000,
       "wake_interval_ms": 1000
     }
   ],
   "market_maker": {
-    "id": 98,
+    "id": 4,
     "name": "MarketMaker",
     "symbol": "ETH-USD",
     "target_oi_per_side": 400000000000,
-    "max_imbalance_pct": 10.0,
+    "max_imbalance_pct": 10,
     "order_size_tokens": 2.7,
     "leverage": 2,
     "wake_interval_ms": 400,
@@ -61,15 +50,15 @@
       "leverage": 2,
       "qty_min": 1.35,
       "qty_max": 4.05,
-      "entry_deviation_pct": 2.0,
+      "entry_deviation_pct": 2,
       "hold_duration_sec": 25,
       "take_profit_pct": 0.5,
-      "stop_loss_pct": 2.0,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 400,
       "balance": 400000000000,
       "start_delay_ms": 0,
-      "id": 3000,
-      "name": "Arb_3000",
+      "id": 7,
+      "name": "Arb_7",
       "symbol": "ETH-USD"
     },
     {
@@ -84,8 +73,8 @@
       "wake_interval_ms": 450,
       "balance": 420000000000,
       "start_delay_ms": 0,
-      "id": 3001,
-      "name": "Arb_3001",
+      "id": 8,
+      "name": "Arb_8",
       "symbol": "ETH-USD"
     },
     {
@@ -100,8 +89,8 @@
       "wake_interval_ms": 350,
       "balance": 380000000000,
       "start_delay_ms": 0,
-      "id": 3002,
-      "name": "Arb_3002",
+      "id": 9,
+      "name": "Arb_9",
       "symbol": "ETH-USD"
     },
     {
@@ -109,15 +98,15 @@
       "leverage": 3,
       "qty_min": 0.68,
       "qty_max": 2.7,
-      "entry_deviation_pct": 3.0,
+      "entry_deviation_pct": 3,
       "hold_duration_sec": 35,
       "take_profit_pct": 0.3,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 500,
       "balance": 350000000000,
       "start_delay_ms": 0,
-      "id": 3003,
-      "name": "Arb_3003",
+      "id": 10,
+      "name": "Arb_10",
       "symbol": "ETH-USD"
     },
     {
@@ -132,8 +121,8 @@
       "wake_interval_ms": 380,
       "balance": 450000000000,
       "start_delay_ms": 0,
-      "id": 3004,
-      "name": "Arb_3004",
+      "id": 11,
+      "name": "Arb_11",
       "symbol": "ETH-USD"
     },
     {
@@ -144,12 +133,12 @@
       "entry_deviation_pct": 2.8,
       "hold_duration_sec": 22,
       "take_profit_pct": 0.7,
-      "stop_loss_pct": 2.0,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 320,
       "balance": 360000000000,
       "start_delay_ms": 0,
-      "id": 3005,
-      "name": "Arb_3005",
+      "id": 12,
+      "name": "Arb_12",
       "symbol": "ETH-USD"
     },
     {
@@ -164,8 +153,8 @@
       "wake_interval_ms": 280,
       "balance": 400000000000,
       "start_delay_ms": 0,
-      "id": 3006,
-      "name": "Arb_3006",
+      "id": 13,
+      "name": "Arb_13",
       "symbol": "ETH-USD"
     },
     {
@@ -173,15 +162,15 @@
       "leverage": 3,
       "qty_min": 0.94,
       "qty_max": 3.78,
-      "entry_deviation_pct": 2.0,
+      "entry_deviation_pct": 2,
       "hold_duration_sec": 32,
       "take_profit_pct": 0.4,
       "stop_loss_pct": 2.5,
       "wake_interval_ms": 420,
       "balance": 390000000000,
       "start_delay_ms": 0,
-      "id": 3007,
-      "name": "Arb_3007",
+      "id": 14,
+      "name": "Arb_14",
       "symbol": "ETH-USD"
     },
     {
@@ -196,8 +185,8 @@
       "wake_interval_ms": 360,
       "balance": 410000000000,
       "start_delay_ms": 0,
-      "id": 3008,
-      "name": "Arb_3008",
+      "id": 15,
+      "name": "Arb_15",
       "symbol": "ETH-USD"
     },
     {
@@ -212,8 +201,8 @@
       "wake_interval_ms": 340,
       "balance": 430000000000,
       "start_delay_ms": 0,
-      "id": 3009,
-      "name": "Arb_3009",
+      "id": 16,
+      "name": "Arb_16",
       "symbol": "ETH-USD"
     },
     {
@@ -222,15 +211,15 @@
       "qty_min": 2.7,
       "qty_max": 6.75,
       "entry_deviation_pct": 1.5,
-      "exit_deviation_pct": 4.0,
+      "exit_deviation_pct": 4,
       "min_hold_sec": 60,
       "max_hold_sec": 200,
-      "stop_loss_pct": 5.0,
+      "stop_loss_pct": 5,
       "wake_interval_ms": 1000,
       "balance": 500000000000,
       "start_delay_ms": 1000,
-      "id": 3010,
-      "name": "Fund_3010",
+      "id": 17,
+      "name": "Fund_17",
       "symbol": "ETH-USD"
     },
     {
@@ -238,16 +227,16 @@
       "leverage": 2,
       "qty_min": 3.38,
       "qty_max": 8.1,
-      "entry_deviation_pct": 2.0,
-      "exit_deviation_pct": 5.0,
+      "entry_deviation_pct": 2,
+      "exit_deviation_pct": 5,
       "min_hold_sec": 50,
       "max_hold_sec": 180,
-      "stop_loss_pct": 6.0,
+      "stop_loss_pct": 6,
       "wake_interval_ms": 900,
       "balance": 550000000000,
       "start_delay_ms": 1200,
-      "id": 3011,
-      "name": "Fund_3011",
+      "id": 18,
+      "name": "Fund_18",
       "symbol": "ETH-USD"
     },
     {
@@ -263,8 +252,8 @@
       "wake_interval_ms": 1100,
       "balance": 480000000000,
       "start_delay_ms": 1500,
-      "id": 3012,
-      "name": "Fund_3012",
+      "id": 19,
+      "name": "Fund_19",
       "symbol": "ETH-USD"
     },
     {
@@ -280,8 +269,8 @@
       "wake_interval_ms": 1200,
       "balance": 600000000000,
       "start_delay_ms": 1800,
-      "id": 3013,
-      "name": "Fund_3013",
+      "id": 20,
+      "name": "Fund_20",
       "symbol": "ETH-USD"
     },
     {
@@ -297,8 +286,8 @@
       "wake_interval_ms": 850,
       "balance": 520000000000,
       "start_delay_ms": 2000,
-      "id": 3014,
-      "name": "Fund_3014",
+      "id": 21,
+      "name": "Fund_21",
       "symbol": "ETH-USD"
     },
     {
@@ -314,8 +303,8 @@
       "wake_interval_ms": 950,
       "balance": 540000000000,
       "start_delay_ms": 1300,
-      "id": 3015,
-      "name": "Fund_3015",
+      "id": 22,
+      "name": "Fund_22",
       "symbol": "ETH-USD"
     },
     {
@@ -324,15 +313,15 @@
       "qty_min": 1.62,
       "qty_max": 4.73,
       "entry_deviation_pct": 2.5,
-      "exit_deviation_pct": 6.0,
+      "exit_deviation_pct": 6,
       "min_hold_sec": 40,
       "max_hold_sec": 140,
-      "stop_loss_pct": 7.0,
+      "stop_loss_pct": 7,
       "wake_interval_ms": 800,
       "balance": 460000000000,
       "start_delay_ms": 1600,
-      "id": 3016,
-      "name": "Fund_3016",
+      "id": 23,
+      "name": "Fund_23",
       "symbol": "ETH-USD"
     },
     {
@@ -348,8 +337,8 @@
       "wake_interval_ms": 1050,
       "balance": 580000000000,
       "start_delay_ms": 1400,
-      "id": 3017,
-      "name": "Fund_3017",
+      "id": 24,
+      "name": "Fund_24",
       "symbol": "ETH-USD"
     },
     {
@@ -359,13 +348,13 @@
       "qty_min": 0.07,
       "qty_max": 0.26,
       "hold_duration_sec": 40,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 800,
       "balance": 50000000000,
       "start_delay_ms": 3000,
-      "id": 4000,
-      "name": "MicroL_4000",
+      "id": 25,
+      "name": "MicroL_25",
       "symbol": "ETH-USD"
     },
     {
@@ -380,8 +369,8 @@
       "wake_interval_ms": 900,
       "balance": 55000000000,
       "start_delay_ms": 3100,
-      "id": 4001,
-      "name": "MicroL_4001",
+      "id": 26,
+      "name": "MicroL_26",
       "symbol": "ETH-USD"
     },
     {
@@ -396,8 +385,8 @@
       "wake_interval_ms": 750,
       "balance": 48000000000,
       "start_delay_ms": 3200,
-      "id": 4002,
-      "name": "MicroL_4002",
+      "id": 27,
+      "name": "MicroL_27",
       "symbol": "ETH-USD"
     },
     {
@@ -408,12 +397,12 @@
       "qty_max": 0.2,
       "hold_duration_sec": 30,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 700,
       "balance": 45000000000,
       "start_delay_ms": 3300,
-      "id": 4003,
-      "name": "MicroL_4003",
+      "id": 28,
+      "name": "MicroL_28",
       "symbol": "ETH-USD"
     },
     {
@@ -428,8 +417,8 @@
       "wake_interval_ms": 850,
       "balance": 52000000000,
       "start_delay_ms": 3400,
-      "id": 4004,
-      "name": "MicroL_4004",
+      "id": 29,
+      "name": "MicroL_29",
       "symbol": "ETH-USD"
     },
     {
@@ -444,8 +433,8 @@
       "wake_interval_ms": 950,
       "balance": 60000000000,
       "start_delay_ms": 3500,
-      "id": 4005,
-      "name": "MicroL_4005",
+      "id": 30,
+      "name": "MicroL_30",
       "symbol": "ETH-USD"
     },
     {
@@ -455,13 +444,13 @@
       "qty_min": 0.04,
       "qty_max": 0.16,
       "hold_duration_sec": 25,
-      "take_profit_pct": 2.0,
-      "stop_loss_pct": 4.0,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
       "wake_interval_ms": 650,
       "balance": 40000000000,
       "start_delay_ms": 3600,
-      "id": 4006,
-      "name": "MicroL_4006",
+      "id": 31,
+      "name": "MicroL_31",
       "symbol": "ETH-USD"
     },
     {
@@ -476,8 +465,8 @@
       "wake_interval_ms": 1000,
       "balance": 58000000000,
       "start_delay_ms": 3700,
-      "id": 4007,
-      "name": "MicroL_4007",
+      "id": 32,
+      "name": "MicroL_32",
       "symbol": "ETH-USD"
     },
     {
@@ -492,8 +481,8 @@
       "wake_interval_ms": 780,
       "balance": 47000000000,
       "start_delay_ms": 3800,
-      "id": 4008,
-      "name": "MicroL_4008",
+      "id": 33,
+      "name": "MicroL_33",
       "symbol": "ETH-USD"
     },
     {
@@ -508,8 +497,8 @@
       "wake_interval_ms": 820,
       "balance": 50000000000,
       "start_delay_ms": 3900,
-      "id": 4009,
-      "name": "MicroL_4009",
+      "id": 34,
+      "name": "MicroL_34",
       "symbol": "ETH-USD"
     },
     {
@@ -524,8 +513,8 @@
       "wake_interval_ms": 880,
       "balance": 54000000000,
       "start_delay_ms": 4000,
-      "id": 4010,
-      "name": "MicroL_4010",
+      "id": 35,
+      "name": "MicroL_35",
       "symbol": "ETH-USD"
     },
     {
@@ -540,8 +529,8 @@
       "wake_interval_ms": 720,
       "balance": 43000000000,
       "start_delay_ms": 4100,
-      "id": 4011,
-      "name": "MicroL_4011",
+      "id": 36,
+      "name": "MicroL_36",
       "symbol": "ETH-USD"
     },
     {
@@ -556,8 +545,8 @@
       "wake_interval_ms": 600,
       "balance": 38000000000,
       "start_delay_ms": 4200,
-      "id": 4012,
-      "name": "MicroL_4012",
+      "id": 37,
+      "name": "MicroL_37",
       "symbol": "ETH-USD"
     },
     {
@@ -572,8 +561,8 @@
       "wake_interval_ms": 1050,
       "balance": 62000000000,
       "start_delay_ms": 4300,
-      "id": 4013,
-      "name": "MicroL_4013",
+      "id": 38,
+      "name": "MicroL_38",
       "symbol": "ETH-USD"
     },
     {
@@ -588,8 +577,8 @@
       "wake_interval_ms": 760,
       "balance": 46000000000,
       "start_delay_ms": 4400,
-      "id": 4014,
-      "name": "MicroL_4014",
+      "id": 39,
+      "name": "MicroL_39",
       "symbol": "ETH-USD"
     },
     {
@@ -599,13 +588,13 @@
       "qty_min": 0.12,
       "qty_max": 0.34,
       "hold_duration_sec": 52,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 920,
       "balance": 56000000000,
       "start_delay_ms": 4500,
-      "id": 4015,
-      "name": "MicroL_4015",
+      "id": 40,
+      "name": "MicroL_40",
       "symbol": "ETH-USD"
     },
     {
@@ -620,8 +609,8 @@
       "wake_interval_ms": 840,
       "balance": 51000000000,
       "start_delay_ms": 4600,
-      "id": 4016,
-      "name": "MicroL_4016",
+      "id": 41,
+      "name": "MicroL_41",
       "symbol": "ETH-USD"
     },
     {
@@ -632,12 +621,12 @@
       "qty_max": 0.1,
       "hold_duration_sec": 18,
       "take_profit_pct": 2.5,
-      "stop_loss_pct": 5.0,
+      "stop_loss_pct": 5,
       "wake_interval_ms": 550,
       "balance": 35000000000,
       "start_delay_ms": 4700,
-      "id": 4017,
-      "name": "MicroL_4017",
+      "id": 42,
+      "name": "MicroL_42",
       "symbol": "ETH-USD"
     },
     {
@@ -652,8 +641,8 @@
       "wake_interval_ms": 800,
       "balance": 49000000000,
       "start_delay_ms": 4800,
-      "id": 4018,
-      "name": "MicroL_4018",
+      "id": 43,
+      "name": "MicroL_43",
       "symbol": "ETH-USD"
     },
     {
@@ -668,8 +657,8 @@
       "wake_interval_ms": 680,
       "balance": 42000000000,
       "start_delay_ms": 4900,
-      "id": 4019,
-      "name": "MicroL_4019",
+      "id": 44,
+      "name": "MicroL_44",
       "symbol": "ETH-USD"
     },
     {
@@ -684,8 +673,8 @@
       "wake_interval_ms": 1100,
       "balance": 65000000000,
       "start_delay_ms": 5000,
-      "id": 4020,
-      "name": "MicroL_4020",
+      "id": 45,
+      "name": "MicroL_45",
       "symbol": "ETH-USD"
     },
     {
@@ -700,8 +689,8 @@
       "wake_interval_ms": 620,
       "balance": 39000000000,
       "start_delay_ms": 5100,
-      "id": 4021,
-      "name": "MicroL_4021",
+      "id": 46,
+      "name": "MicroL_46",
       "symbol": "ETH-USD"
     },
     {
@@ -716,8 +705,8 @@
       "wake_interval_ms": 860,
       "balance": 53000000000,
       "start_delay_ms": 5200,
-      "id": 4022,
-      "name": "MicroL_4022",
+      "id": 47,
+      "name": "MicroL_47",
       "symbol": "ETH-USD"
     },
     {
@@ -732,8 +721,8 @@
       "wake_interval_ms": 980,
       "balance": 59000000000,
       "start_delay_ms": 5300,
-      "id": 4023,
-      "name": "MicroL_4023",
+      "id": 48,
+      "name": "MicroL_48",
       "symbol": "ETH-USD"
     },
     {
@@ -748,8 +737,8 @@
       "wake_interval_ms": 740,
       "balance": 45000000000,
       "start_delay_ms": 5400,
-      "id": 4024,
-      "name": "MicroL_4024",
+      "id": 49,
+      "name": "MicroL_49",
       "symbol": "ETH-USD"
     },
     {
@@ -764,8 +753,8 @@
       "wake_interval_ms": 810,
       "balance": 50000000000,
       "start_delay_ms": 5500,
-      "id": 4025,
-      "name": "MicroL_4025",
+      "id": 50,
+      "name": "MicroL_50",
       "symbol": "ETH-USD"
     },
     {
@@ -780,8 +769,8 @@
       "wake_interval_ms": 940,
       "balance": 57000000000,
       "start_delay_ms": 5600,
-      "id": 4026,
-      "name": "MicroL_4026",
+      "id": 51,
+      "name": "MicroL_51",
       "symbol": "ETH-USD"
     },
     {
@@ -796,8 +785,8 @@
       "wake_interval_ms": 580,
       "balance": 37000000000,
       "start_delay_ms": 5700,
-      "id": 4027,
-      "name": "MicroL_4027",
+      "id": 52,
+      "name": "MicroL_52",
       "symbol": "ETH-USD"
     },
     {
@@ -812,8 +801,8 @@
       "wake_interval_ms": 780,
       "balance": 48000000000,
       "start_delay_ms": 5800,
-      "id": 4028,
-      "name": "MicroL_4028",
+      "id": 53,
+      "name": "MicroL_53",
       "symbol": "ETH-USD"
     },
     {
@@ -828,8 +817,8 @@
       "wake_interval_ms": 700,
       "balance": 44000000000,
       "start_delay_ms": 5900,
-      "id": 4029,
-      "name": "MicroL_4029",
+      "id": 54,
+      "name": "MicroL_54",
       "symbol": "ETH-USD"
     },
     {
@@ -844,8 +833,8 @@
       "wake_interval_ms": 1020,
       "balance": 61000000000,
       "start_delay_ms": 6000,
-      "id": 4030,
-      "name": "MicroL_4030",
+      "id": 55,
+      "name": "MicroL_55",
       "symbol": "ETH-USD"
     },
     {
@@ -860,8 +849,8 @@
       "wake_interval_ms": 750,
       "balance": 46000000000,
       "start_delay_ms": 6100,
-      "id": 4031,
-      "name": "MicroL_4031",
+      "id": 56,
+      "name": "MicroL_56",
       "symbol": "ETH-USD"
     },
     {
@@ -876,8 +865,8 @@
       "wake_interval_ms": 520,
       "balance": 33000000000,
       "start_delay_ms": 6200,
-      "id": 4032,
-      "name": "MicroL_4032",
+      "id": 57,
+      "name": "MicroL_57",
       "symbol": "ETH-USD"
     },
     {
@@ -892,8 +881,8 @@
       "wake_interval_ms": 900,
       "balance": 55000000000,
       "start_delay_ms": 6300,
-      "id": 4033,
-      "name": "MicroL_4033",
+      "id": 58,
+      "name": "MicroL_58",
       "symbol": "ETH-USD"
     },
     {
@@ -904,12 +893,12 @@
       "qty_max": 0.25,
       "hold_duration_sec": 40,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 800,
       "balance": 49000000000,
       "start_delay_ms": 6400,
-      "id": 4034,
-      "name": "MicroL_4034",
+      "id": 59,
+      "name": "MicroL_59",
       "symbol": "ETH-USD"
     },
     {
@@ -924,8 +913,8 @@
       "wake_interval_ms": 840,
       "balance": 51000000000,
       "start_delay_ms": 6500,
-      "id": 4035,
-      "name": "MicroL_4035",
+      "id": 60,
+      "name": "MicroL_60",
       "symbol": "ETH-USD"
     },
     {
@@ -935,13 +924,13 @@
       "qty_min": 0.04,
       "qty_max": 0.16,
       "hold_duration_sec": 26,
-      "take_profit_pct": 2.0,
-      "stop_loss_pct": 4.0,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
       "wake_interval_ms": 640,
       "balance": 40000000000,
       "start_delay_ms": 6600,
-      "id": 4036,
-      "name": "MicroL_4036",
+      "id": 61,
+      "name": "MicroL_61",
       "symbol": "ETH-USD"
     },
     {
@@ -956,8 +945,8 @@
       "wake_interval_ms": 960,
       "balance": 58000000000,
       "start_delay_ms": 6700,
-      "id": 4037,
-      "name": "MicroL_4037",
+      "id": 62,
+      "name": "MicroL_62",
       "symbol": "ETH-USD"
     },
     {
@@ -972,8 +961,8 @@
       "wake_interval_ms": 710,
       "balance": 43000000000,
       "start_delay_ms": 6800,
-      "id": 4038,
-      "name": "MicroL_4038",
+      "id": 63,
+      "name": "MicroL_63",
       "symbol": "ETH-USD"
     },
     {
@@ -988,8 +977,8 @@
       "wake_interval_ms": 770,
       "balance": 47000000000,
       "start_delay_ms": 6900,
-      "id": 4039,
-      "name": "MicroL_4039",
+      "id": 64,
+      "name": "MicroL_64",
       "symbol": "ETH-USD"
     },
     {
@@ -1004,8 +993,8 @@
       "wake_interval_ms": 920,
       "balance": 56000000000,
       "start_delay_ms": 7000,
-      "id": 4040,
-      "name": "MicroL_4040",
+      "id": 65,
+      "name": "MicroL_65",
       "symbol": "ETH-USD"
     },
     {
@@ -1020,8 +1009,8 @@
       "wake_interval_ms": 600,
       "balance": 38000000000,
       "start_delay_ms": 7100,
-      "id": 4041,
-      "name": "MicroL_4041",
+      "id": 66,
+      "name": "MicroL_66",
       "symbol": "ETH-USD"
     },
     {
@@ -1031,13 +1020,13 @@
       "qty_min": 0.1,
       "qty_max": 0.31,
       "hold_duration_sec": 48,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 880,
       "balance": 54000000000,
       "start_delay_ms": 7200,
-      "id": 4042,
-      "name": "MicroL_4042",
+      "id": 67,
+      "name": "MicroL_67",
       "symbol": "ETH-USD"
     },
     {
@@ -1052,8 +1041,8 @@
       "wake_interval_ms": 730,
       "balance": 45000000000,
       "start_delay_ms": 7300,
-      "id": 4043,
-      "name": "MicroL_4043",
+      "id": 68,
+      "name": "MicroL_68",
       "symbol": "ETH-USD"
     },
     {
@@ -1068,8 +1057,8 @@
       "wake_interval_ms": 860,
       "balance": 52000000000,
       "start_delay_ms": 7400,
-      "id": 4044,
-      "name": "MicroL_4044",
+      "id": 69,
+      "name": "MicroL_69",
       "symbol": "ETH-USD"
     },
     {
@@ -1080,12 +1069,12 @@
       "qty_max": 0.1,
       "hold_duration_sec": 18,
       "take_profit_pct": 2.5,
-      "stop_loss_pct": 5.0,
+      "stop_loss_pct": 5,
       "wake_interval_ms": 540,
       "balance": 34000000000,
       "start_delay_ms": 7500,
-      "id": 4045,
-      "name": "MicroL_4045",
+      "id": 70,
+      "name": "MicroL_70",
       "symbol": "ETH-USD"
     },
     {
@@ -1100,8 +1089,8 @@
       "wake_interval_ms": 820,
       "balance": 50000000000,
       "start_delay_ms": 7600,
-      "id": 4046,
-      "name": "MicroL_4046",
+      "id": 71,
+      "name": "MicroL_71",
       "symbol": "ETH-USD"
     },
     {
@@ -1112,12 +1101,12 @@
       "qty_max": 0.21,
       "hold_duration_sec": 36,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 760,
       "balance": 46000000000,
       "start_delay_ms": 7700,
-      "id": 4047,
-      "name": "MicroL_4047",
+      "id": 72,
+      "name": "MicroL_72",
       "symbol": "ETH-USD"
     },
     {
@@ -1132,8 +1121,8 @@
       "wake_interval_ms": 1000,
       "balance": 60000000000,
       "start_delay_ms": 7800,
-      "id": 4048,
-      "name": "MicroL_4048",
+      "id": 73,
+      "name": "MicroL_73",
       "symbol": "ETH-USD"
     },
     {
@@ -1148,8 +1137,8 @@
       "wake_interval_ms": 620,
       "balance": 39000000000,
       "start_delay_ms": 7900,
-      "id": 4049,
-      "name": "MicroL_4049",
+      "id": 74,
+      "name": "MicroL_74",
       "symbol": "ETH-USD"
     },
     {
@@ -1159,13 +1148,13 @@
       "qty_min": 0.07,
       "qty_max": 0.26,
       "hold_duration_sec": 40,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 800,
       "balance": 50000000000,
       "start_delay_ms": 3000,
-      "id": 5000,
-      "name": "MicroS_5000",
+      "id": 75,
+      "name": "MicroS_75",
       "symbol": "ETH-USD"
     },
     {
@@ -1180,8 +1169,8 @@
       "wake_interval_ms": 900,
       "balance": 55000000000,
       "start_delay_ms": 3100,
-      "id": 5001,
-      "name": "MicroS_5001",
+      "id": 76,
+      "name": "MicroS_76",
       "symbol": "ETH-USD"
     },
     {
@@ -1196,8 +1185,8 @@
       "wake_interval_ms": 750,
       "balance": 48000000000,
       "start_delay_ms": 3200,
-      "id": 5002,
-      "name": "MicroS_5002",
+      "id": 77,
+      "name": "MicroS_77",
       "symbol": "ETH-USD"
     },
     {
@@ -1208,12 +1197,12 @@
       "qty_max": 0.2,
       "hold_duration_sec": 30,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 700,
       "balance": 45000000000,
       "start_delay_ms": 3300,
-      "id": 5003,
-      "name": "MicroS_5003",
+      "id": 78,
+      "name": "MicroS_78",
       "symbol": "ETH-USD"
     },
     {
@@ -1228,8 +1217,8 @@
       "wake_interval_ms": 850,
       "balance": 52000000000,
       "start_delay_ms": 3400,
-      "id": 5004,
-      "name": "MicroS_5004",
+      "id": 79,
+      "name": "MicroS_79",
       "symbol": "ETH-USD"
     },
     {
@@ -1244,8 +1233,8 @@
       "wake_interval_ms": 950,
       "balance": 60000000000,
       "start_delay_ms": 3500,
-      "id": 5005,
-      "name": "MicroS_5005",
+      "id": 80,
+      "name": "MicroS_80",
       "symbol": "ETH-USD"
     },
     {
@@ -1255,13 +1244,13 @@
       "qty_min": 0.04,
       "qty_max": 0.16,
       "hold_duration_sec": 25,
-      "take_profit_pct": 2.0,
-      "stop_loss_pct": 4.0,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
       "wake_interval_ms": 650,
       "balance": 40000000000,
       "start_delay_ms": 3600,
-      "id": 5006,
-      "name": "MicroS_5006",
+      "id": 81,
+      "name": "MicroS_81",
       "symbol": "ETH-USD"
     },
     {
@@ -1276,8 +1265,8 @@
       "wake_interval_ms": 1000,
       "balance": 58000000000,
       "start_delay_ms": 3700,
-      "id": 5007,
-      "name": "MicroS_5007",
+      "id": 82,
+      "name": "MicroS_82",
       "symbol": "ETH-USD"
     },
     {
@@ -1292,8 +1281,8 @@
       "wake_interval_ms": 780,
       "balance": 47000000000,
       "start_delay_ms": 3800,
-      "id": 5008,
-      "name": "MicroS_5008",
+      "id": 83,
+      "name": "MicroS_83",
       "symbol": "ETH-USD"
     },
     {
@@ -1308,8 +1297,8 @@
       "wake_interval_ms": 820,
       "balance": 50000000000,
       "start_delay_ms": 3900,
-      "id": 5009,
-      "name": "MicroS_5009",
+      "id": 84,
+      "name": "MicroS_84",
       "symbol": "ETH-USD"
     },
     {
@@ -1324,8 +1313,8 @@
       "wake_interval_ms": 880,
       "balance": 54000000000,
       "start_delay_ms": 4000,
-      "id": 5010,
-      "name": "MicroS_5010",
+      "id": 85,
+      "name": "MicroS_85",
       "symbol": "ETH-USD"
     },
     {
@@ -1340,8 +1329,8 @@
       "wake_interval_ms": 720,
       "balance": 43000000000,
       "start_delay_ms": 4100,
-      "id": 5011,
-      "name": "MicroS_5011",
+      "id": 86,
+      "name": "MicroS_86",
       "symbol": "ETH-USD"
     },
     {
@@ -1356,8 +1345,8 @@
       "wake_interval_ms": 600,
       "balance": 38000000000,
       "start_delay_ms": 4200,
-      "id": 5012,
-      "name": "MicroS_5012",
+      "id": 87,
+      "name": "MicroS_87",
       "symbol": "ETH-USD"
     },
     {
@@ -1372,8 +1361,8 @@
       "wake_interval_ms": 1050,
       "balance": 62000000000,
       "start_delay_ms": 4300,
-      "id": 5013,
-      "name": "MicroS_5013",
+      "id": 88,
+      "name": "MicroS_88",
       "symbol": "ETH-USD"
     },
     {
@@ -1388,8 +1377,8 @@
       "wake_interval_ms": 760,
       "balance": 46000000000,
       "start_delay_ms": 4400,
-      "id": 5014,
-      "name": "MicroS_5014",
+      "id": 89,
+      "name": "MicroS_89",
       "symbol": "ETH-USD"
     },
     {
@@ -1399,13 +1388,13 @@
       "qty_min": 0.12,
       "qty_max": 0.34,
       "hold_duration_sec": 52,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 920,
       "balance": 56000000000,
       "start_delay_ms": 4500,
-      "id": 5015,
-      "name": "MicroS_5015",
+      "id": 90,
+      "name": "MicroS_90",
       "symbol": "ETH-USD"
     },
     {
@@ -1420,8 +1409,8 @@
       "wake_interval_ms": 840,
       "balance": 51000000000,
       "start_delay_ms": 4600,
-      "id": 5016,
-      "name": "MicroS_5016",
+      "id": 91,
+      "name": "MicroS_91",
       "symbol": "ETH-USD"
     },
     {
@@ -1432,12 +1421,12 @@
       "qty_max": 0.1,
       "hold_duration_sec": 18,
       "take_profit_pct": 2.5,
-      "stop_loss_pct": 5.0,
+      "stop_loss_pct": 5,
       "wake_interval_ms": 550,
       "balance": 35000000000,
       "start_delay_ms": 4700,
-      "id": 5017,
-      "name": "MicroS_5017",
+      "id": 92,
+      "name": "MicroS_92",
       "symbol": "ETH-USD"
     },
     {
@@ -1452,8 +1441,8 @@
       "wake_interval_ms": 800,
       "balance": 49000000000,
       "start_delay_ms": 4800,
-      "id": 5018,
-      "name": "MicroS_5018",
+      "id": 93,
+      "name": "MicroS_93",
       "symbol": "ETH-USD"
     },
     {
@@ -1468,8 +1457,8 @@
       "wake_interval_ms": 680,
       "balance": 42000000000,
       "start_delay_ms": 4900,
-      "id": 5019,
-      "name": "MicroS_5019",
+      "id": 94,
+      "name": "MicroS_94",
       "symbol": "ETH-USD"
     },
     {
@@ -1484,8 +1473,8 @@
       "wake_interval_ms": 1100,
       "balance": 65000000000,
       "start_delay_ms": 5000,
-      "id": 5020,
-      "name": "MicroS_5020",
+      "id": 95,
+      "name": "MicroS_95",
       "symbol": "ETH-USD"
     },
     {
@@ -1500,8 +1489,8 @@
       "wake_interval_ms": 620,
       "balance": 39000000000,
       "start_delay_ms": 5100,
-      "id": 5021,
-      "name": "MicroS_5021",
+      "id": 96,
+      "name": "MicroS_96",
       "symbol": "ETH-USD"
     },
     {
@@ -1516,8 +1505,8 @@
       "wake_interval_ms": 860,
       "balance": 53000000000,
       "start_delay_ms": 5200,
-      "id": 5022,
-      "name": "MicroS_5022",
+      "id": 97,
+      "name": "MicroS_97",
       "symbol": "ETH-USD"
     },
     {
@@ -1532,8 +1521,8 @@
       "wake_interval_ms": 980,
       "balance": 59000000000,
       "start_delay_ms": 5300,
-      "id": 5023,
-      "name": "MicroS_5023",
+      "id": 98,
+      "name": "MicroS_98",
       "symbol": "ETH-USD"
     },
     {
@@ -1548,8 +1537,8 @@
       "wake_interval_ms": 740,
       "balance": 45000000000,
       "start_delay_ms": 5400,
-      "id": 5024,
-      "name": "MicroS_5024",
+      "id": 99,
+      "name": "MicroS_99",
       "symbol": "ETH-USD"
     },
     {
@@ -1564,8 +1553,8 @@
       "wake_interval_ms": 810,
       "balance": 50000000000,
       "start_delay_ms": 5500,
-      "id": 5025,
-      "name": "MicroS_5025",
+      "id": 100,
+      "name": "MicroS_100",
       "symbol": "ETH-USD"
     },
     {
@@ -1580,8 +1569,8 @@
       "wake_interval_ms": 940,
       "balance": 57000000000,
       "start_delay_ms": 5600,
-      "id": 5026,
-      "name": "MicroS_5026",
+      "id": 101,
+      "name": "MicroS_101",
       "symbol": "ETH-USD"
     },
     {
@@ -1596,8 +1585,8 @@
       "wake_interval_ms": 580,
       "balance": 37000000000,
       "start_delay_ms": 5700,
-      "id": 5027,
-      "name": "MicroS_5027",
+      "id": 102,
+      "name": "MicroS_102",
       "symbol": "ETH-USD"
     },
     {
@@ -1612,8 +1601,8 @@
       "wake_interval_ms": 780,
       "balance": 48000000000,
       "start_delay_ms": 5800,
-      "id": 5028,
-      "name": "MicroS_5028",
+      "id": 103,
+      "name": "MicroS_103",
       "symbol": "ETH-USD"
     },
     {
@@ -1628,8 +1617,8 @@
       "wake_interval_ms": 700,
       "balance": 44000000000,
       "start_delay_ms": 5900,
-      "id": 5029,
-      "name": "MicroS_5029",
+      "id": 104,
+      "name": "MicroS_104",
       "symbol": "ETH-USD"
     },
     {
@@ -1644,8 +1633,8 @@
       "wake_interval_ms": 1020,
       "balance": 61000000000,
       "start_delay_ms": 6000,
-      "id": 5030,
-      "name": "MicroS_5030",
+      "id": 105,
+      "name": "MicroS_105",
       "symbol": "ETH-USD"
     },
     {
@@ -1660,8 +1649,8 @@
       "wake_interval_ms": 750,
       "balance": 46000000000,
       "start_delay_ms": 6100,
-      "id": 5031,
-      "name": "MicroS_5031",
+      "id": 106,
+      "name": "MicroS_106",
       "symbol": "ETH-USD"
     },
     {
@@ -1676,8 +1665,8 @@
       "wake_interval_ms": 520,
       "balance": 33000000000,
       "start_delay_ms": 6200,
-      "id": 5032,
-      "name": "MicroS_5032",
+      "id": 107,
+      "name": "MicroS_107",
       "symbol": "ETH-USD"
     },
     {
@@ -1692,8 +1681,8 @@
       "wake_interval_ms": 900,
       "balance": 55000000000,
       "start_delay_ms": 6300,
-      "id": 5033,
-      "name": "MicroS_5033",
+      "id": 108,
+      "name": "MicroS_108",
       "symbol": "ETH-USD"
     },
     {
@@ -1704,12 +1693,12 @@
       "qty_max": 0.25,
       "hold_duration_sec": 40,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 800,
       "balance": 49000000000,
       "start_delay_ms": 6400,
-      "id": 5034,
-      "name": "MicroS_5034",
+      "id": 109,
+      "name": "MicroS_109",
       "symbol": "ETH-USD"
     },
     {
@@ -1724,8 +1713,8 @@
       "wake_interval_ms": 840,
       "balance": 51000000000,
       "start_delay_ms": 6500,
-      "id": 5035,
-      "name": "MicroS_5035",
+      "id": 110,
+      "name": "MicroS_110",
       "symbol": "ETH-USD"
     },
     {
@@ -1735,13 +1724,13 @@
       "qty_min": 0.04,
       "qty_max": 0.16,
       "hold_duration_sec": 26,
-      "take_profit_pct": 2.0,
-      "stop_loss_pct": 4.0,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
       "wake_interval_ms": 640,
       "balance": 40000000000,
       "start_delay_ms": 6600,
-      "id": 5036,
-      "name": "MicroS_5036",
+      "id": 111,
+      "name": "MicroS_111",
       "symbol": "ETH-USD"
     },
     {
@@ -1756,8 +1745,8 @@
       "wake_interval_ms": 960,
       "balance": 58000000000,
       "start_delay_ms": 6700,
-      "id": 5037,
-      "name": "MicroS_5037",
+      "id": 112,
+      "name": "MicroS_112",
       "symbol": "ETH-USD"
     },
     {
@@ -1772,8 +1761,8 @@
       "wake_interval_ms": 710,
       "balance": 43000000000,
       "start_delay_ms": 6800,
-      "id": 5038,
-      "name": "MicroS_5038",
+      "id": 113,
+      "name": "MicroS_113",
       "symbol": "ETH-USD"
     },
     {
@@ -1788,8 +1777,8 @@
       "wake_interval_ms": 770,
       "balance": 47000000000,
       "start_delay_ms": 6900,
-      "id": 5039,
-      "name": "MicroS_5039",
+      "id": 114,
+      "name": "MicroS_114",
       "symbol": "ETH-USD"
     },
     {
@@ -1804,8 +1793,8 @@
       "wake_interval_ms": 920,
       "balance": 56000000000,
       "start_delay_ms": 7000,
-      "id": 5040,
-      "name": "MicroS_5040",
+      "id": 115,
+      "name": "MicroS_115",
       "symbol": "ETH-USD"
     },
     {
@@ -1820,8 +1809,8 @@
       "wake_interval_ms": 600,
       "balance": 38000000000,
       "start_delay_ms": 7100,
-      "id": 5041,
-      "name": "MicroS_5041",
+      "id": 116,
+      "name": "MicroS_116",
       "symbol": "ETH-USD"
     },
     {
@@ -1831,13 +1820,13 @@
       "qty_min": 0.1,
       "qty_max": 0.31,
       "hold_duration_sec": 48,
-      "take_profit_pct": 1.0,
-      "stop_loss_pct": 2.0,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 880,
       "balance": 54000000000,
       "start_delay_ms": 7200,
-      "id": 5042,
-      "name": "MicroS_5042",
+      "id": 117,
+      "name": "MicroS_117",
       "symbol": "ETH-USD"
     },
     {
@@ -1852,8 +1841,8 @@
       "wake_interval_ms": 730,
       "balance": 45000000000,
       "start_delay_ms": 7300,
-      "id": 5043,
-      "name": "MicroS_5043",
+      "id": 118,
+      "name": "MicroS_118",
       "symbol": "ETH-USD"
     },
     {
@@ -1868,8 +1857,8 @@
       "wake_interval_ms": 860,
       "balance": 52000000000,
       "start_delay_ms": 7400,
-      "id": 5044,
-      "name": "MicroS_5044",
+      "id": 119,
+      "name": "MicroS_119",
       "symbol": "ETH-USD"
     },
     {
@@ -1880,12 +1869,12 @@
       "qty_max": 0.1,
       "hold_duration_sec": 18,
       "take_profit_pct": 2.5,
-      "stop_loss_pct": 5.0,
+      "stop_loss_pct": 5,
       "wake_interval_ms": 540,
       "balance": 34000000000,
       "start_delay_ms": 7500,
-      "id": 5045,
-      "name": "MicroS_5045",
+      "id": 120,
+      "name": "MicroS_120",
       "symbol": "ETH-USD"
     },
     {
@@ -1900,8 +1889,8 @@
       "wake_interval_ms": 820,
       "balance": 50000000000,
       "start_delay_ms": 7600,
-      "id": 5046,
-      "name": "MicroS_5046",
+      "id": 121,
+      "name": "MicroS_121",
       "symbol": "ETH-USD"
     },
     {
@@ -1912,12 +1901,12 @@
       "qty_max": 0.21,
       "hold_duration_sec": 36,
       "take_profit_pct": 1.5,
-      "stop_loss_pct": 3.0,
+      "stop_loss_pct": 3,
       "wake_interval_ms": 760,
       "balance": 46000000000,
       "start_delay_ms": 7700,
-      "id": 5047,
-      "name": "MicroS_5047",
+      "id": 122,
+      "name": "MicroS_122",
       "symbol": "ETH-USD"
     },
     {
@@ -1932,8 +1921,8 @@
       "wake_interval_ms": 1000,
       "balance": 60000000000,
       "start_delay_ms": 7800,
-      "id": 5048,
-      "name": "MicroS_5048",
+      "id": 123,
+      "name": "MicroS_123",
       "symbol": "ETH-USD"
     },
     {
@@ -1948,8 +1937,8 @@
       "wake_interval_ms": 620,
       "balance": 39000000000,
       "start_delay_ms": 7900,
-      "id": 5049,
-      "name": "MicroS_5049",
+      "id": 124,
+      "name": "MicroS_124",
       "symbol": "ETH-USD"
     },
     {
@@ -1958,16 +1947,16 @@
       "leverage": 3,
       "qty_min": 1.35,
       "qty_max": 4.05,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 5.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 5,
       "min_hold_sec": 60,
       "max_hold_sec": 180,
       "reentry_delay_sec": 30,
       "wake_interval_ms": 2000,
       "balance": 400000000000,
       "start_delay_ms": 8000,
-      "id": 6000,
-      "name": "Inst_L_6000",
+      "id": 125,
+      "name": "Inst_125",
       "symbol": "ETH-USD"
     },
     {
@@ -1976,16 +1965,16 @@
       "leverage": 3,
       "qty_min": 1.35,
       "qty_max": 4.05,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 5.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 5,
       "min_hold_sec": 60,
       "max_hold_sec": 180,
       "reentry_delay_sec": 30,
       "wake_interval_ms": 2000,
       "balance": 400000000000,
       "start_delay_ms": 8100,
-      "id": 6001,
-      "name": "Inst_S_6001",
+      "id": 126,
+      "name": "Inst_126",
       "symbol": "ETH-USD"
     },
     {
@@ -1994,16 +1983,16 @@
       "leverage": 4,
       "qty_min": 2.03,
       "qty_max": 5.4,
-      "take_profit_pct": 4.0,
-      "stop_loss_pct": 6.0,
+      "take_profit_pct": 4,
+      "stop_loss_pct": 6,
       "min_hold_sec": 50,
       "max_hold_sec": 160,
       "reentry_delay_sec": 25,
       "wake_interval_ms": 1800,
       "balance": 450000000000,
       "start_delay_ms": 8200,
-      "id": 6002,
-      "name": "Inst_L_6002",
+      "id": 127,
+      "name": "Inst_127",
       "symbol": "ETH-USD"
     },
     {
@@ -2012,16 +2001,16 @@
       "leverage": 4,
       "qty_min": 2.03,
       "qty_max": 5.4,
-      "take_profit_pct": 4.0,
-      "stop_loss_pct": 6.0,
+      "take_profit_pct": 4,
+      "stop_loss_pct": 6,
       "min_hold_sec": 50,
       "max_hold_sec": 160,
       "reentry_delay_sec": 25,
       "wake_interval_ms": 1800,
       "balance": 450000000000,
       "start_delay_ms": 8300,
-      "id": 6003,
-      "name": "Inst_S_6003",
+      "id": 128,
+      "name": "Inst_128",
       "symbol": "ETH-USD"
     },
     {
@@ -2038,8 +2027,8 @@
       "wake_interval_ms": 2200,
       "balance": 500000000000,
       "start_delay_ms": 8400,
-      "id": 6004,
-      "name": "Inst_L_6004",
+      "id": 129,
+      "name": "Inst_129",
       "symbol": "ETH-USD"
     },
     {
@@ -2056,8 +2045,8 @@
       "wake_interval_ms": 2200,
       "balance": 500000000000,
       "start_delay_ms": 8500,
-      "id": 6005,
-      "name": "Inst_S_6005",
+      "id": 130,
+      "name": "Inst_130",
       "symbol": "ETH-USD"
     },
     {
@@ -2066,16 +2055,16 @@
       "leverage": 5,
       "qty_min": 1.08,
       "qty_max": 3.38,
-      "take_profit_pct": 5.0,
-      "stop_loss_pct": 7.0,
+      "take_profit_pct": 5,
+      "stop_loss_pct": 7,
       "min_hold_sec": 40,
       "max_hold_sec": 140,
       "reentry_delay_sec": 20,
       "wake_interval_ms": 1600,
       "balance": 380000000000,
       "start_delay_ms": 8600,
-      "id": 6006,
-      "name": "Inst_L_6006",
+      "id": 131,
+      "name": "Inst_131",
       "symbol": "ETH-USD"
     },
     {
@@ -2084,16 +2073,16 @@
       "leverage": 5,
       "qty_min": 1.08,
       "qty_max": 3.38,
-      "take_profit_pct": 5.0,
-      "stop_loss_pct": 7.0,
+      "take_profit_pct": 5,
+      "stop_loss_pct": 7,
       "min_hold_sec": 40,
       "max_hold_sec": 140,
       "reentry_delay_sec": 20,
       "wake_interval_ms": 1600,
       "balance": 380000000000,
       "start_delay_ms": 8700,
-      "id": 6007,
-      "name": "Inst_S_6007",
+      "id": 132,
+      "name": "Inst_132",
       "symbol": "ETH-USD"
     },
     {
@@ -2110,8 +2099,8 @@
       "wake_interval_ms": 1900,
       "balance": 420000000000,
       "start_delay_ms": 8800,
-      "id": 6008,
-      "name": "Inst_L_6008",
+      "id": 133,
+      "name": "Inst_133",
       "symbol": "ETH-USD"
     },
     {
@@ -2128,8 +2117,8 @@
       "wake_interval_ms": 1900,
       "balance": 420000000000,
       "start_delay_ms": 8900,
-      "id": 6009,
-      "name": "Inst_S_6009",
+      "id": 134,
+      "name": "Inst_134",
       "symbol": "ETH-USD"
     },
     {
@@ -2146,8 +2135,8 @@
       "wake_interval_ms": 1700,
       "balance": 470000000000,
       "start_delay_ms": 9000,
-      "id": 6010,
-      "name": "Inst_L_6010",
+      "id": 135,
+      "name": "Inst_135",
       "symbol": "ETH-USD"
     },
     {
@@ -2164,8 +2153,8 @@
       "wake_interval_ms": 1700,
       "balance": 470000000000,
       "start_delay_ms": 9100,
-      "id": 6011,
-      "name": "Inst_S_6011",
+      "id": 136,
+      "name": "Inst_136",
       "symbol": "ETH-USD"
     },
     {
@@ -2182,8 +2171,8 @@
       "wake_interval_ms": 2100,
       "balance": 520000000000,
       "start_delay_ms": 9200,
-      "id": 6012,
-      "name": "Inst_L_6012",
+      "id": 137,
+      "name": "Inst_137",
       "symbol": "ETH-USD"
     },
     {
@@ -2200,8 +2189,8 @@
       "wake_interval_ms": 2100,
       "balance": 520000000000,
       "start_delay_ms": 9300,
-      "id": 6013,
-      "name": "Inst_S_6013",
+      "id": 138,
+      "name": "Inst_138",
       "symbol": "ETH-USD"
     },
     {
@@ -2211,15 +2200,15 @@
       "qty_min": 1.35,
       "qty_max": 4.05,
       "take_profit_pct": 5.5,
-      "stop_loss_pct": 8.0,
+      "stop_loss_pct": 8,
       "min_hold_sec": 35,
       "max_hold_sec": 120,
       "reentry_delay_sec": 18,
       "wake_interval_ms": 1500,
       "balance": 360000000000,
       "start_delay_ms": 9400,
-      "id": 6014,
-      "name": "Inst_L_6014",
+      "id": 139,
+      "name": "Inst_139",
       "symbol": "ETH-USD"
     },
     {
@@ -2229,15 +2218,15 @@
       "qty_min": 1.35,
       "qty_max": 4.05,
       "take_profit_pct": 5.5,
-      "stop_loss_pct": 8.0,
+      "stop_loss_pct": 8,
       "min_hold_sec": 35,
       "max_hold_sec": 120,
       "reentry_delay_sec": 18,
       "wake_interval_ms": 1500,
       "balance": 360000000000,
       "start_delay_ms": 9500,
-      "id": 6015,
-      "name": "Inst_S_6015",
+      "id": 140,
+      "name": "Inst_140",
       "symbol": "ETH-USD"
     },
     {
@@ -2254,8 +2243,8 @@
       "wake_interval_ms": 1850,
       "balance": 440000000000,
       "start_delay_ms": 9600,
-      "id": 6016,
-      "name": "Inst_L_6016",
+      "id": 141,
+      "name": "Inst_141",
       "symbol": "ETH-USD"
     },
     {
@@ -2272,8 +2261,8 @@
       "wake_interval_ms": 1850,
       "balance": 440000000000,
       "start_delay_ms": 9700,
-      "id": 6017,
-      "name": "Inst_S_6017",
+      "id": 142,
+      "name": "Inst_142",
       "symbol": "ETH-USD"
     },
     {
@@ -2282,16 +2271,16 @@
       "leverage": 3,
       "qty_min": 3.38,
       "qty_max": 8.1,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 5.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 5,
       "min_hold_sec": 75,
       "max_hold_sec": 210,
       "reentry_delay_sec": 38,
       "wake_interval_ms": 2300,
       "balance": 550000000000,
       "start_delay_ms": 9800,
-      "id": 6018,
-      "name": "Inst_L_6018",
+      "id": 143,
+      "name": "Inst_143",
       "symbol": "ETH-USD"
     },
     {
@@ -2300,16 +2289,16 @@
       "leverage": 3,
       "qty_min": 3.38,
       "qty_max": 8.1,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 5.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 5,
       "min_hold_sec": 75,
       "max_hold_sec": 210,
       "reentry_delay_sec": 38,
       "wake_interval_ms": 2300,
       "balance": 550000000000,
       "start_delay_ms": 9900,
-      "id": 6019,
-      "name": "Inst_S_6019",
+      "id": 144,
+      "name": "Inst_144",
       "symbol": "ETH-USD"
     },
     {
@@ -2319,13 +2308,13 @@
       "qty_min": 0.07,
       "qty_max": 0.2,
       "hold_duration_sec": 20,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 6.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 6,
       "wake_interval_ms": 600,
       "balance": 30000000000,
       "start_delay_ms": 10000,
-      "id": 7000,
-      "name": "Risky_L_7000",
+      "id": 145,
+      "name": "Risky_145",
       "symbol": "ETH-USD"
     },
     {
@@ -2335,13 +2324,13 @@
       "qty_min": 0.07,
       "qty_max": 0.2,
       "hold_duration_sec": 20,
-      "take_profit_pct": 3.0,
-      "stop_loss_pct": 6.0,
+      "take_profit_pct": 3,
+      "stop_loss_pct": 6,
       "wake_interval_ms": 600,
       "balance": 30000000000,
       "start_delay_ms": 10100,
-      "id": 7001,
-      "name": "Risky_S_7001",
+      "id": 146,
+      "name": "Risky_146",
       "symbol": "ETH-USD"
     },
     {
@@ -2351,13 +2340,13 @@
       "qty_min": 0.04,
       "qty_max": 0.13,
       "hold_duration_sec": 15,
-      "take_profit_pct": 4.0,
-      "stop_loss_pct": 8.0,
+      "take_profit_pct": 4,
+      "stop_loss_pct": 8,
       "wake_interval_ms": 500,
       "balance": 25000000000,
       "start_delay_ms": 10200,
-      "id": 7002,
-      "name": "Risky_L_7002",
+      "id": 147,
+      "name": "Risky_147",
       "symbol": "ETH-USD"
     },
     {
@@ -2367,13 +2356,13 @@
       "qty_min": 0.04,
       "qty_max": 0.13,
       "hold_duration_sec": 15,
-      "take_profit_pct": 4.0,
-      "stop_loss_pct": 8.0,
+      "take_profit_pct": 4,
+      "stop_loss_pct": 8,
       "wake_interval_ms": 500,
       "balance": 25000000000,
       "start_delay_ms": 10300,
-      "id": 7003,
-      "name": "Risky_S_7003",
+      "id": 148,
+      "name": "Risky_148",
       "symbol": "ETH-USD"
     },
     {
@@ -2383,13 +2372,13 @@
       "qty_min": 0.03,
       "qty_max": 0.1,
       "hold_duration_sec": 12,
-      "take_profit_pct": 5.0,
-      "stop_loss_pct": 10.0,
+      "take_profit_pct": 5,
+      "stop_loss_pct": 10,
       "wake_interval_ms": 450,
       "balance": 20000000000,
       "start_delay_ms": 10400,
-      "id": 7004,
-      "name": "Risky_L_7004",
+      "id": 149,
+      "name": "Risky_149",
       "symbol": "ETH-USD"
     },
     {
@@ -2399,13 +2388,13 @@
       "qty_min": 0.03,
       "qty_max": 0.1,
       "hold_duration_sec": 12,
-      "take_profit_pct": 5.0,
-      "stop_loss_pct": 10.0,
+      "take_profit_pct": 5,
+      "stop_loss_pct": 10,
       "wake_interval_ms": 450,
       "balance": 20000000000,
       "start_delay_ms": 10500,
-      "id": 7005,
-      "name": "Risky_S_7005",
+      "id": 150,
+      "name": "Risky_150",
       "symbol": "ETH-USD"
     },
     {
@@ -2416,12 +2405,12 @@
       "qty_max": 0.16,
       "hold_duration_sec": 18,
       "take_profit_pct": 3.5,
-      "stop_loss_pct": 7.0,
+      "stop_loss_pct": 7,
       "wake_interval_ms": 550,
       "balance": 28000000000,
       "start_delay_ms": 10600,
-      "id": 7006,
-      "name": "Risky_L_7006",
+      "id": 151,
+      "name": "Risky_151",
       "symbol": "ETH-USD"
     },
     {
@@ -2432,12 +2421,12 @@
       "qty_max": 0.16,
       "hold_duration_sec": 18,
       "take_profit_pct": 3.5,
-      "stop_loss_pct": 7.0,
+      "stop_loss_pct": 7,
       "wake_interval_ms": 550,
       "balance": 28000000000,
       "start_delay_ms": 10700,
-      "id": 7007,
-      "name": "Risky_S_7007",
+      "id": 152,
+      "name": "Risky_152",
       "symbol": "ETH-USD"
     },
     {
@@ -2448,12 +2437,12 @@
       "qty_max": 0.12,
       "hold_duration_sec": 14,
       "take_profit_pct": 4.5,
-      "stop_loss_pct": 9.0,
+      "stop_loss_pct": 9,
       "wake_interval_ms": 480,
       "balance": 22000000000,
       "start_delay_ms": 10800,
-      "id": 7008,
-      "name": "Risky_L_7008",
+      "id": 153,
+      "name": "Risky_153",
       "symbol": "ETH-USD"
     },
     {
@@ -2464,12 +2453,12 @@
       "qty_max": 0.12,
       "hold_duration_sec": 14,
       "take_profit_pct": 4.5,
-      "stop_loss_pct": 9.0,
+      "stop_loss_pct": 9,
       "wake_interval_ms": 480,
       "balance": 22000000000,
       "start_delay_ms": 10900,
-      "id": 7009,
-      "name": "Risky_S_7009",
+      "id": 154,
+      "name": "Risky_154",
       "symbol": "ETH-USD"
     },
     {
@@ -2484,8 +2473,8 @@
       "wake_interval_ms": 1200,
       "balance": 18000000000,
       "start_delay_ms": 6000,
-      "id": 9100,
-      "name": "BTC_Hodler_L_9100",
+      "id": 155,
+      "name": "BTC_155",
       "symbol": "BTC-USD"
     },
     {
@@ -2500,8 +2489,8 @@
       "wake_interval_ms": 1200,
       "balance": 18000000000,
       "start_delay_ms": 6000,
-      "id": 9101,
-      "name": "BTC_Hodler_S_9101",
+      "id": 156,
+      "name": "BTC_156",
       "symbol": "BTC-USD"
     },
     {
@@ -2509,15 +2498,15 @@
       "leverage": 2,
       "qty_min": 0.015,
       "qty_max": 0.04,
-      "entry_deviation_pct": 2.0,
+      "entry_deviation_pct": 2,
       "hold_duration_sec": 25,
       "take_profit_pct": 0.6,
-      "stop_loss_pct": 2.0,
+      "stop_loss_pct": 2,
       "wake_interval_ms": 900,
       "balance": 22000000000,
       "start_delay_ms": 4000,
-      "id": 9102,
-      "name": "BTC_Arb_9102",
+      "id": 157,
+      "name": "BTC_157",
       "symbol": "BTC-USD"
     },
     {
@@ -2532,8 +2521,8 @@
       "wake_interval_ms": 1000,
       "balance": 24000000000,
       "start_delay_ms": 4500,
-      "id": 9103,
-      "name": "BTC_Arb_9103",
+      "id": 158,
+      "name": "BTC_158",
       "symbol": "BTC-USD"
     },
     {
@@ -2549,15 +2538,527 @@
       "wake_interval_ms": 1300,
       "balance": 26000000000,
       "start_delay_ms": 7000,
-      "id": 9104,
-      "name": "BTC_Fund_9104",
+      "id": 159,
+      "name": "BTC_159",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.02,
+      "qty_max": 0.05,
+      "hold_duration_sec": 40,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
+      "wake_interval_ms": 800,
+      "balance": 50000000000,
+      "start_delay_ms": 3000,
+      "id": 160,
+      "name": "BTC_160",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.025,
+      "qty_max": 0.06,
+      "hold_duration_sec": 50,
+      "take_profit_pct": 1.2,
+      "stop_loss_pct": 2.5,
+      "wake_interval_ms": 900,
+      "balance": 55000000000,
+      "start_delay_ms": 3100,
+      "id": 161,
+      "name": "BTC_161",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.018,
+      "qty_max": 0.045,
+      "hold_duration_sec": 35,
+      "take_profit_pct": 0.8,
+      "stop_loss_pct": 1.8,
+      "wake_interval_ms": 750,
+      "balance": 48000000000,
+      "start_delay_ms": 3200,
+      "id": 162,
+      "name": "BTC_162",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 4,
+      "qty_min": 0.015,
+      "qty_max": 0.04,
+      "hold_duration_sec": 30,
+      "take_profit_pct": 1.5,
+      "stop_loss_pct": 3,
+      "wake_interval_ms": 700,
+      "balance": 45000000000,
+      "start_delay_ms": 3300,
+      "id": 163,
+      "name": "BTC_163",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.022,
+      "qty_max": 0.055,
+      "hold_duration_sec": 45,
+      "take_profit_pct": 1.1,
+      "stop_loss_pct": 2.2,
+      "wake_interval_ms": 850,
+      "balance": 52000000000,
+      "start_delay_ms": 3400,
+      "id": 164,
+      "name": "BTC_164",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.028,
+      "qty_max": 0.07,
+      "hold_duration_sec": 55,
+      "take_profit_pct": 0.9,
+      "stop_loss_pct": 1.5,
+      "wake_interval_ms": 950,
+      "balance": 60000000000,
+      "start_delay_ms": 3500,
+      "id": 165,
+      "name": "BTC_165",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 5,
+      "qty_min": 0.012,
+      "qty_max": 0.035,
+      "hold_duration_sec": 25,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
+      "wake_interval_ms": 650,
+      "balance": 40000000000,
+      "start_delay_ms": 3600,
+      "id": 166,
+      "name": "BTC_166",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.026,
+      "qty_max": 0.065,
+      "hold_duration_sec": 60,
+      "take_profit_pct": 0.7,
+      "stop_loss_pct": 1.6,
+      "wake_interval_ms": 1000,
+      "balance": 58000000000,
+      "start_delay_ms": 3700,
+      "id": 167,
+      "name": "BTC_167",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.017,
+      "qty_max": 0.042,
+      "hold_duration_sec": 38,
+      "take_profit_pct": 1.3,
+      "stop_loss_pct": 2.8,
+      "wake_interval_ms": 780,
+      "balance": 47000000000,
+      "start_delay_ms": 3800,
+      "id": 168,
+      "name": "BTC_168",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 4,
+      "qty_min": 0.02,
+      "qty_max": 0.05,
+      "hold_duration_sec": 42,
+      "take_profit_pct": 1.4,
+      "stop_loss_pct": 3.2,
+      "wake_interval_ms": 820,
+      "balance": 50000000000,
+      "start_delay_ms": 3900,
+      "id": 169,
+      "name": "BTC_169",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.024,
+      "qty_max": 0.058,
+      "hold_duration_sec": 48,
+      "take_profit_pct": 0.85,
+      "stop_loss_pct": 1.7,
+      "wake_interval_ms": 880,
+      "balance": 54000000000,
+      "start_delay_ms": 4000,
+      "id": 170,
+      "name": "BTC_170",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.014,
+      "qty_max": 0.038,
+      "hold_duration_sec": 32,
+      "take_profit_pct": 1.6,
+      "stop_loss_pct": 3.5,
+      "wake_interval_ms": 720,
+      "balance": 43000000000,
+      "start_delay_ms": 4100,
+      "id": 171,
+      "name": "BTC_171",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 5,
+      "qty_min": 0.01,
+      "qty_max": 0.03,
+      "hold_duration_sec": 22,
+      "take_profit_pct": 2.2,
+      "stop_loss_pct": 4.5,
+      "wake_interval_ms": 600,
+      "balance": 38000000000,
+      "start_delay_ms": 4200,
+      "id": 172,
+      "name": "BTC_172",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.03,
+      "qty_max": 0.075,
+      "hold_duration_sec": 65,
+      "take_profit_pct": 0.6,
+      "stop_loss_pct": 1.4,
+      "wake_interval_ms": 1050,
+      "balance": 62000000000,
+      "start_delay_ms": 4300,
+      "id": 173,
+      "name": "BTC_173",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 4,
+      "qty_min": 0.018,
+      "qty_max": 0.045,
+      "hold_duration_sec": 36,
+      "take_profit_pct": 1.7,
+      "stop_loss_pct": 3.8,
+      "wake_interval_ms": 760,
+      "balance": 46000000000,
+      "start_delay_ms": 4400,
+      "id": 174,
+      "name": "BTC_174",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.026,
+      "qty_max": 0.062,
+      "hold_duration_sec": 52,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
+      "wake_interval_ms": 920,
+      "balance": 56000000000,
+      "start_delay_ms": 4500,
+      "id": 175,
+      "name": "BTC_175",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 2,
+      "qty_min": 0.022,
+      "qty_max": 0.054,
+      "hold_duration_sec": 44,
+      "take_profit_pct": 0.95,
+      "stop_loss_pct": 1.9,
+      "wake_interval_ms": 840,
+      "balance": 51000000000,
+      "start_delay_ms": 4600,
+      "id": 176,
+      "name": "BTC_176",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 6,
+      "qty_min": 0.008,
+      "qty_max": 0.025,
+      "hold_duration_sec": 18,
+      "take_profit_pct": 2.5,
+      "stop_loss_pct": 5,
+      "wake_interval_ms": 550,
+      "balance": 35000000000,
+      "start_delay_ms": 4700,
+      "id": 177,
+      "name": "BTC_177",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 3,
+      "qty_min": 0.02,
+      "qty_max": 0.048,
+      "hold_duration_sec": 40,
+      "take_profit_pct": 1.25,
+      "stop_loss_pct": 2.6,
+      "wake_interval_ms": 800,
+      "balance": 49000000000,
+      "start_delay_ms": 4800,
+      "id": 178,
+      "name": "BTC_178",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "long",
+      "leverage": 4,
+      "qty_min": 0.015,
+      "qty_max": 0.04,
+      "hold_duration_sec": 28,
+      "take_profit_pct": 1.8,
+      "stop_loss_pct": 3.6,
+      "wake_interval_ms": 680,
+      "balance": 42000000000,
+      "start_delay_ms": 4900,
+      "id": 179,
+      "name": "BTC_179",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.02,
+      "qty_max": 0.05,
+      "hold_duration_sec": 40,
+      "take_profit_pct": 1,
+      "stop_loss_pct": 2,
+      "wake_interval_ms": 800,
+      "balance": 50000000000,
+      "start_delay_ms": 3050,
+      "id": 180,
+      "name": "BTC_180",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.025,
+      "qty_max": 0.06,
+      "hold_duration_sec": 50,
+      "take_profit_pct": 1.2,
+      "stop_loss_pct": 2.5,
+      "wake_interval_ms": 900,
+      "balance": 55000000000,
+      "start_delay_ms": 3150,
+      "id": 181,
+      "name": "BTC_181",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.018,
+      "qty_max": 0.045,
+      "hold_duration_sec": 35,
+      "take_profit_pct": 0.8,
+      "stop_loss_pct": 1.8,
+      "wake_interval_ms": 750,
+      "balance": 48000000000,
+      "start_delay_ms": 3250,
+      "id": 182,
+      "name": "BTC_182",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 4,
+      "qty_min": 0.015,
+      "qty_max": 0.04,
+      "hold_duration_sec": 30,
+      "take_profit_pct": 1.5,
+      "stop_loss_pct": 3,
+      "wake_interval_ms": 700,
+      "balance": 45000000000,
+      "start_delay_ms": 3350,
+      "id": 183,
+      "name": "BTC_183",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.022,
+      "qty_max": 0.055,
+      "hold_duration_sec": 45,
+      "take_profit_pct": 1.1,
+      "stop_loss_pct": 2.2,
+      "wake_interval_ms": 850,
+      "balance": 52000000000,
+      "start_delay_ms": 3450,
+      "id": 184,
+      "name": "BTC_184",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.028,
+      "qty_max": 0.07,
+      "hold_duration_sec": 55,
+      "take_profit_pct": 0.9,
+      "stop_loss_pct": 1.5,
+      "wake_interval_ms": 950,
+      "balance": 60000000000,
+      "start_delay_ms": 3550,
+      "id": 185,
+      "name": "BTC_185",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 5,
+      "qty_min": 0.012,
+      "qty_max": 0.035,
+      "hold_duration_sec": 25,
+      "take_profit_pct": 2,
+      "stop_loss_pct": 4,
+      "wake_interval_ms": 650,
+      "balance": 40000000000,
+      "start_delay_ms": 3650,
+      "id": 186,
+      "name": "BTC_186",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.026,
+      "qty_max": 0.065,
+      "hold_duration_sec": 60,
+      "take_profit_pct": 0.7,
+      "stop_loss_pct": 1.6,
+      "wake_interval_ms": 1000,
+      "balance": 58000000000,
+      "start_delay_ms": 3750,
+      "id": 187,
+      "name": "BTC_187",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.017,
+      "qty_max": 0.042,
+      "hold_duration_sec": 38,
+      "take_profit_pct": 1.3,
+      "stop_loss_pct": 2.8,
+      "wake_interval_ms": 780,
+      "balance": 47000000000,
+      "start_delay_ms": 3850,
+      "id": 188,
+      "name": "BTC_188",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 4,
+      "qty_min": 0.02,
+      "qty_max": 0.05,
+      "hold_duration_sec": 42,
+      "take_profit_pct": 1.4,
+      "stop_loss_pct": 3.2,
+      "wake_interval_ms": 820,
+      "balance": 50000000000,
+      "start_delay_ms": 3950,
+      "id": 189,
+      "name": "BTC_189",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 2,
+      "qty_min": 0.024,
+      "qty_max": 0.058,
+      "hold_duration_sec": 48,
+      "take_profit_pct": 0.85,
+      "stop_loss_pct": 1.7,
+      "wake_interval_ms": 880,
+      "balance": 54000000000,
+      "start_delay_ms": 4050,
+      "id": 190,
+      "name": "BTC_190",
+      "symbol": "BTC-USD"
+    },
+    {
+      "strategy": "hodler",
+      "side": "short",
+      "leverage": 3,
+      "qty_min": 0.014,
+      "qty_max": 0.038,
+      "hold_duration_sec": 32,
+      "take_profit_pct": 1.6,
+      "stop_loss_pct": 3.5,
+      "wake_interval_ms": 720,
+      "balance": 43000000000,
+      "start_delay_ms": 4150,
+      "id": 191,
+      "name": "BTC_191",
       "symbol": "BTC-USD"
     }
   ],
   "limit_traders": [
     {
-      "id": 8300,
-      "name": "BTC_LimitMeanRev_A",
+      "id": 192,
+      "name": "BTC_192",
       "symbol": "BTC-USD",
       "strategy": "mean_reversion",
       "entry_offset_pct": 0.7,
@@ -2570,13 +3071,13 @@
       "balance": 20000000000
     },
     {
-      "id": 8301,
-      "name": "BTC_LimitBreakout_A",
+      "id": 193,
+      "name": "BTC_193",
       "symbol": "BTC-USD",
       "strategy": "breakout",
       "breakout_offset_pct": 0.5,
       "stop_loss_pct": 1.4,
-      "take_profit_pct": 2.0,
+      "take_profit_pct": 2,
       "leverage": 3,
       "direction": "buy",
       "qty": 0.015,
@@ -2584,8 +3085,8 @@
       "balance": 18000000000
     },
     {
-      "id": 8100,
-      "name": "LimitMeanRev_A",
+      "id": 194,
+      "name": "LimitMeanRev_194",
       "symbol": "ETH-USD",
       "strategy": "mean_reversion",
       "entry_offset_pct": 0.8,
@@ -2598,8 +3099,8 @@
       "balance": 25000000000
     },
     {
-      "id": 8101,
-      "name": "LimitBreakout_A",
+      "id": 195,
+      "name": "LimitBreakout_195",
       "symbol": "ETH-USD",
       "strategy": "breakout",
       "breakout_offset_pct": 0.6,
@@ -2612,12 +3113,12 @@
       "balance": 22000000000
     },
     {
-      "id": 8102,
-      "name": "LimitGrid_A",
+      "id": 196,
+      "name": "LimitGrid_196",
       "symbol": "ETH-USD",
       "strategy": "grid",
       "entry_offset_pct": 0.5,
-      "stop_loss_pct": 2.0,
+      "stop_loss_pct": 2,
       "take_profit_pct": 1.6,
       "leverage": 3,
       "trend_lookback": 5,
@@ -2626,8 +3127,8 @@
       "balance": 20000000000
     },
     {
-      "id": 8200,
-      "name": "SmartLimit1",
+      "id": 197,
+      "name": "SmartLimit1_197",
       "symbol": "ETH-USD",
       "strategy": "smart",
       "sma_fast": 10,
@@ -2646,8 +3147,8 @@
       "order_mode": "active"
     },
     {
-      "id": 8201,
-      "name": "SmartLimit2",
+      "id": 198,
+      "name": "SmartLimit2_198",
       "symbol": "ETH-USD",
       "strategy": "smart",
       "sma_fast": 8,
@@ -2658,7 +3159,7 @@
       "atr_period": 10,
       "entry_atr_mult": 0.4,
       "stop_atr_mult": 1.5,
-      "take_atr_mult": 2.0,
+      "take_atr_mult": 2,
       "leverage": 2,
       "qty": 0.5,
       "wake_interval_ms": 2000,
@@ -2666,8 +3167,8 @@
       "order_mode": "passive"
     },
     {
-      "id": 8202,
-      "name": "SmartLimit3",
+      "id": 199,
+      "name": "SmartLimit3_199",
       "symbol": "ETH-USD",
       "strategy": "smart",
       "sma_fast": 12,
@@ -2677,7 +3178,7 @@
       "rsi_high": 60,
       "atr_period": 16,
       "entry_atr_mult": 0.6,
-      "stop_atr_mult": 1.0,
+      "stop_atr_mult": 1,
       "take_atr_mult": 1.5,
       "leverage": 4,
       "qty": 0.3,
@@ -2688,18 +3189,18 @@
   ],
   "keepers": [
     {
-      "id": 901,
+      "id": 5,
       "name": "KeeperFast",
       "wake_interval_ms": 80
     },
     {
-      "id": 902,
+      "id": 6,
       "name": "KeeperSlow",
       "wake_interval_ms": 160
     }
   ],
   "liquidation_agent": {
-    "id": 99,
+    "id": 3,
     "name": "LiqBot",
     "wake_interval_ms": 500
   }

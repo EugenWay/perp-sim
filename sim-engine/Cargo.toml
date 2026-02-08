@@ -9,10 +9,8 @@ reqwest = { version = "0.11", features = ["json", "blocking"] }
 # JSON serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# Perpetual futures exchange engine
-perp-futures = { git = "https://github.com/EugenWay/perp-futures.git" }
-# U256 for large numbers - must match perp-futures version
-primitive-types = "0.14"
+# U256 for large numbers (matches sails_rs/gclient)
+primitive-types = { version = "0.12.2", features = ["codec", "scale-info"] }
 # HTTP server for HumanAgent API
 tiny_http = "0.12"
 # CLI argument parsing
@@ -20,3 +18,16 @@ clap = { version = "4.4", features = ["derive"] }
 # Crossbeam channels for thread communication
 crossbeam-channel = "0.5"
 tungstenite = "0.28.0"
+gclient = "1.10.0"
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+# SS58 address decoding for ActorId mapping
+sp-core = "34.0.0"
+# Sails client runtime (generated from IDL)
+sails-rs = { version = "0.10.1", features = ["gclient"] }
+# SCALE codec for Sails encoding (service/method routing + args)
+parity-scale-codec = { version = "3.7", features = ["derive"] }
+scale-info = { version = "2.11", features = ["derive"] }
+
+[build-dependencies]
+sails-client-gen = "0.10.1"
