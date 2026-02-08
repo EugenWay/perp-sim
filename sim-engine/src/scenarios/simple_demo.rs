@@ -14,7 +14,8 @@ use crate::logging::{CsvExecutionLogger, CsvLiquidationLogger, CsvMarketLogger, 
 use crate::messages::Side;
 use crate::sim_engine::SimEngine;
 use crate::vara::VaraClient;
-use crossbeam_channel;
+use crate::vara::keystore::normalize_agent_id;
+use primitive_types::U256;
 
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -92,7 +93,8 @@ impl AddressBook {
     }
 
     fn address_for_agent(&self, id: u32) -> Option<String> {
-        let name = format!("bot_{:03}", id);
+        let normalized = normalize_agent_id(id);
+        let name = format!("bot_{:03}", normalized);
         self.entries.get(&name).cloned()
     }
 
@@ -586,89 +588,98 @@ fn create_limit_trader(cfg: &LimitTraderJsonConfig, exchange_id: u32) -> LimitTr
     LimitTraderAgent::new(cfg.id, config)
 }
 
-/// Run a simulation with given configuration
-fn run_with_config(config: SimConfig, vara_client: Arc<VaraClient>) {
-    println!("[Scenario] Loading scenario: {}", config.scenario_name);
-    println!("[Scenario] Duration: {}s", config.duration_sec);
-    println!("[Scenario] Markets: {}", config.exchange.markets.len());
-    println!("[Scenario] Oracles: {}", config.oracles.len());
-    println!("[Scenario] SmartTraders: {}", config.smart_traders.len());
-    println!("[Scenario] Blockchain: Vara Network");
+const DEFAULT_DEPOSIT_MICRO_USD: i128 = 1_000_000_000_000; // $1M
 
-    let max_ticks = (config.duration_sec * 1000 / 100) as usize;
-
-    let mut engine = SimEngine::with_default_latency();
-    let address_book = AddressBook::load();
-    address_book.write_funding_list("keys/funding_addresses.txt");
-
-    // Register CSV loggers for all event types
-    let _ = fs::create_dir_all(&config.logs_dir);
-
-    if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+fn balance_to_collateral_tokens(balance_micro_usd: i128, collateral_decimals: u32) -> U256 {
+    if balance_micro_usd <= 0 {
+        return U256::zero();
     }
-    if let Ok(logger) = CsvExecutionLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
+    let mut amount = U256::from(balance_micro_usd as u128);
+    if collateral_decimals > 6 {
+        let exp = (collateral_decimals - 6) as usize;
+        amount *= U256::exp10(exp);
+    } else if collateral_decimals < 6 {
+        let exp = (6 - collateral_decimals) as usize;
+        let divisor = U256::exp10(exp);
+        if !divisor.is_zero() {
+            amount /= divisor;
+        }
     }
-    if let Ok(logger) = CsvPositionLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvMarketLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvLiquidationLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
+    amount
+}
 
-    {
-        let orders_path = format!("{}/orders.csv", config.logs_dir);
-        let file = File::create(&orders_path).expect("cannot create orders.csv");
-        let writer = RefCell::new(BufWriter::new(file));
-
-        writeln!(writer.borrow_mut(), "ts,from,to,msg_type,symbol,side,price,qty,reason")
-            .expect("cannot write CSV header");
-
-        let listener = move |ev: &SimEvent| {
-            if let SimEvent::OrderLog {
-                ts,
-                from,
-                to,
-                msg_type,
-                symbol,
-                side,
-                price,
-                qty,
-            } = ev
-            {
-                let symbol_str = symbol.as_deref().unwrap_or("");
-                let side_str = side.map(|s| format!("{:?}", s)).unwrap_or_default();
-                let price_str = price.map(|p| p.to_string()).unwrap_or_default();
-                let qty_str = qty.map(|q| q.to_string()).unwrap_or_default();
-
-                if let Err(e) = writeln!(
-                    writer.borrow_mut(),
-                    "{ts},{from},{to},{:?},{symbol},{side},{price},{qty}",
-                    msg_type,
-                    symbol = symbol_str,
-                    side = side_str,
-                    price = price_str,
-                    qty = qty_str,
-                ) {
-                    eprintln!("[Scenario] failed to write to orders.csv: {e}");
-                }
-            }
-        };
-
-        engine
-            .kernel
-            .event_bus_mut()
-            .subscribe(Box::new(ClosureListener { closure: listener }));
-    }
-
-    // Convert JSON market configs to ExchangeAgent MarketConfig
-    let markets: Vec<MarketConfig> = config
+fn deposit_initial_balances(config: &SimConfig, vara_client: &VaraClient) {
+    let collateral_decimals = config
         .exchange
         .markets
+        .first()
+        .map(|m| m.collateral_decimals)
+        .unwrap_or(6);
+
+    let mut deposits: Vec<(u32, i128)> = Vec::new();
+
+    if let Some(mm_cfg) = &config.market_maker {
+        deposits.push((mm_cfg.id, mm_cfg.balance));
+    }
+
+    for smart_cfg in &config.smart_traders {
+        let balance = smart_cfg.balance.unwrap_or(DEFAULT_DEPOSIT_MICRO_USD);
+        deposits.push((smart_cfg.id, balance));
+    }
+
+    for limit_cfg in &config.limit_traders {
+        let balance = limit_cfg.balance.unwrap_or(DEFAULT_DEPOSIT_MICRO_USD);
+        deposits.push((limit_cfg.id, balance));
+    }
+
+    if deposits.is_empty() {
+        println!("[Scenario] No deposits to make");
+        return;
+    }
+
+    println!(
+        "[Scenario] Making {} initial deposits in parallel (collateral_decimals={})",
+        deposits.len(),
+        collateral_decimals
+    );
+
+    // Convert to (agent_id, U256 amount) pairs for batch call
+    let batch: Vec<(u32, primitive_types::U256)> = deposits
+        .iter()
+        .map(|(agent_id, balance_micro)| {
+            (*agent_id, balance_to_collateral_tokens(*balance_micro, collateral_decimals))
+        })
+        .filter(|(_, amount)| !amount.is_zero())
+        .collect();
+
+    match vara_client.deposit_batch(&batch) {
+        Ok((success, failed)) => {
+            println!(
+                "[Scenario] Deposits completed: {}/{} successful, {} failed",
+                success,
+                batch.len(),
+                failed
+            );
+        }
+        Err(e) => {
+            eprintln!("[Scenario] Deposit batch error: {}", e);
+        }
+    }
+}
+
+/// Register all CSV event loggers on the engine.
+fn register_csv_loggers(engine: &mut SimEngine, logs_dir: &str) {
+    let _ = fs::create_dir_all(logs_dir);
+    if let Ok(l) = CsvOracleLogger::new(logs_dir) { engine.kernel.event_bus_mut().subscribe(Box::new(l)); }
+    if let Ok(l) = CsvExecutionLogger::new(logs_dir) { engine.kernel.event_bus_mut().subscribe(Box::new(l)); }
+    if let Ok(l) = CsvPositionLogger::new(logs_dir) { engine.kernel.event_bus_mut().subscribe(Box::new(l)); }
+    if let Ok(l) = CsvMarketLogger::new(logs_dir) { engine.kernel.event_bus_mut().subscribe(Box::new(l)); }
+    if let Ok(l) = CsvLiquidationLogger::new(logs_dir) { engine.kernel.event_bus_mut().subscribe(Box::new(l)); }
+}
+
+/// Convert JSON market configs to ExchangeAgent MarketConfig.
+fn convert_markets(json_markets: &[MarketJsonConfig]) -> Vec<MarketConfig> {
+    json_markets
         .iter()
         .map(|m| MarketConfig {
             id: m.id,
@@ -681,9 +692,80 @@ fn run_with_config(config: SimConfig, vara_client: Arc<VaraClient>) {
             index_decimals: m.index_decimals,
             collateral_decimals: m.collateral_decimals,
         })
-        .collect();
+        .collect()
+}
 
-    let exchange = ExchangeAgent::new(config.exchange.id, config.exchange.name.clone(), markets, vara_client.clone());
+/// Register the orders.csv event listener on the engine.
+fn register_orders_csv(engine: &mut SimEngine, logs_dir: &str) {
+    let orders_path = format!("{}/orders.csv", logs_dir);
+    let file = match File::create(&orders_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[Scenario] Failed to create {}: {}", orders_path, e);
+            return;
+        }
+    };
+    let writer = RefCell::new(BufWriter::new(file));
+    if let Err(e) = writeln!(writer.borrow_mut(), "ts,from,to,msg_type,symbol,side,price,qty,reason") {
+        eprintln!("[Scenario] Failed to write CSV header: {}", e);
+        return;
+    }
+
+    let listener = move |ev: &SimEvent| {
+        if let SimEvent::OrderLog { ts, from, to, msg_type, symbol, side, price, qty } = ev {
+            let symbol_str = symbol.as_deref().unwrap_or("");
+            let side_str = side.map(|s| format!("{:?}", s)).unwrap_or_default();
+            let price_str = price.map(|p| p.to_string()).unwrap_or_default();
+            let qty_str = qty.map(|q| q.to_string()).unwrap_or_default();
+            if let Err(e) = writeln!(
+                writer.borrow_mut(),
+                "{ts},{from},{to},{:?},{symbol},{side},{price},{qty}",
+                msg_type,
+                symbol = symbol_str,
+                side = side_str,
+                price = price_str,
+                qty = qty_str,
+            ) {
+                eprintln!("[Scenario] failed to write to orders.csv: {e}");
+            }
+        }
+    };
+    engine.kernel.event_bus_mut().subscribe(Box::new(ClosureListener { closure: listener }));
+}
+
+/// Run a simulation with given configuration
+fn run_with_config(config: SimConfig, skip_deposits: bool, vara_client: Arc<VaraClient>) {
+    println!("[Scenario] Loading scenario: {}", config.scenario_name);
+    println!("[Scenario] Duration: {}s", config.duration_sec);
+    println!("[Scenario] Markets: {}", config.exchange.markets.len());
+    println!("[Scenario] Oracles: {}", config.oracles.len());
+    println!("[Scenario] SmartTraders: {}", config.smart_traders.len());
+    println!("[Scenario] Blockchain: Vara Network");
+
+    let max_ticks = (config.duration_sec * 1000 / 100) as usize;
+
+    let mut engine = SimEngine::with_default_latency();
+    let address_book = AddressBook::load();
+    address_book.write_funding_list("keys/funding_addresses.txt");
+    if skip_deposits {
+        println!("[Scenario] Skipping initial deposits (flag enabled)");
+    } else {
+        deposit_initial_balances(&config, &vara_client);
+    }
+
+    register_csv_loggers(&mut engine, &config.logs_dir);
+    register_orders_csv(&mut engine, &config.logs_dir);
+
+    let markets = convert_markets(&config.exchange.markets);
+    let tx_result_rx = vara_client.take_tx_result_receiver();
+    let exchange = ExchangeAgent::new(
+        config.exchange.id,
+        config.exchange.name.clone(),
+        markets,
+        vara_client.clone(),
+        tx_result_rx,
+        Some(&config.logs_dir),
+    );
     engine.kernel.add_agent(Box::new(exchange));
 
     for oracle_cfg in &config.oracles {
@@ -804,7 +886,11 @@ fn find_config_file(scenario_name: &str) -> Option<String> {
 }
 
 /// Run scenario with blockchain
-pub fn run_scenario_with_blockchain(scenario_name: &str, vara_client: Arc<VaraClient>) {
+pub fn run_scenario_with_blockchain(
+    scenario_name: &str,
+    skip_deposits: bool,
+    vara_client: Arc<VaraClient>,
+) {
     let config = match find_config_file(scenario_name) {
         Some(path) => {
             println!("[Scenario] Found config: {}", path);
@@ -821,11 +907,17 @@ pub fn run_scenario_with_blockchain(scenario_name: &str, vara_client: Arc<VaraCl
         }
     };
 
-    run_with_config(config, vara_client);
+    run_with_config(config, skip_deposits, vara_client);
 }
 
 /// Run simulation in realtime mode with blockchain
-pub fn run_realtime_with_blockchain(scenario_name: &str, tick_ms: u64, api_port: u16, vara_client: Arc<VaraClient>) {
+pub fn run_realtime_with_blockchain(
+    scenario_name: &str,
+    tick_ms: u64,
+    api_port: u16,
+    skip_deposits: bool,
+    vara_client: Arc<VaraClient>,
+) {
     let config = match find_config_file(scenario_name) {
         Some(path) => {
             println!("[Scenario] Found config: {}", path);
@@ -840,11 +932,17 @@ pub fn run_realtime_with_blockchain(scenario_name: &str, tick_ms: u64, api_port:
         }
     };
 
-    run_realtime_with_config(config, tick_ms, api_port, vara_client);
+    run_realtime_with_config(config, tick_ms, api_port, skip_deposits, vara_client);
 }
 
 /// Internal realtime runner with config
-fn run_realtime_with_config(config: SimConfig, tick_ms: u64, api_port: u16, vara_client: Arc<VaraClient>) {
+fn run_realtime_with_config(
+    config: SimConfig,
+    tick_ms: u64,
+    api_port: u16,
+    skip_deposits: bool,
+    vara_client: Arc<VaraClient>,
+) {
     println!("[Scenario] Loading: {} (REALTIME)", config.scenario_name);
     println!("[Scenario] Tick: {}ms, API port: {}", tick_ms, api_port);
 
@@ -853,25 +951,13 @@ fn run_realtime_with_config(config: SimConfig, tick_ms: u64, api_port: u16, vara
     let mut engine = SimEngine::with_realtime(tick_ms);
     let address_book = AddressBook::load();
     address_book.write_funding_list("keys/funding_addresses.txt");
+    if skip_deposits {
+        println!("[Scenario] Skipping initial deposits (flag enabled)");
+    } else {
+        deposit_initial_balances(&config, &vara_client);
+    }
 
-    // Register CSV loggers for all event types
-    let _ = fs::create_dir_all(&config.logs_dir);
-
-    if let Ok(logger) = CsvOracleLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvExecutionLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvPositionLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvMarketLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
-    if let Ok(logger) = CsvLiquidationLogger::new(&config.logs_dir) {
-        engine.kernel.event_bus_mut().subscribe(Box::new(logger));
-    }
+    register_csv_loggers(&mut engine, &config.logs_dir);
 
     // Start API server (HTTP)
     let (response_tx, response_rx) = crossbeam_channel::unbounded();
@@ -910,25 +996,16 @@ fn run_realtime_with_config(config: SimConfig, tick_ms: u64, api_port: u16, vara
         }
     });
 
-    // Create markets
-    let markets: Vec<MarketConfig> = config
-        .exchange
-        .markets
-        .iter()
-        .map(|m| MarketConfig {
-            id: m.id,
-            symbol: m.symbol.clone(),
-            index_token: m.index_token.clone(),
-            collateral_token: m.collateral_token.clone(),
-            collateral_amount: m.initial_liquidity.collateral_amount,
-            index_amount: m.initial_liquidity.index_amount,
-            liquidity_usd: m.initial_liquidity.liquidity_usd,
-            index_decimals: m.index_decimals,
-            collateral_decimals: m.collateral_decimals,
-        })
-        .collect();
-
-    let exchange = ExchangeAgent::new(config.exchange.id, config.exchange.name.clone(), markets, vara_client.clone());
+    let markets = convert_markets(&config.exchange.markets);
+    let tx_result_rx = vara_client.take_tx_result_receiver();
+    let exchange = ExchangeAgent::new(
+        config.exchange.id,
+        config.exchange.name.clone(),
+        markets,
+        vara_client.clone(),
+        tx_result_rx,
+        Some(&config.logs_dir),
+    );
     engine.kernel.add_agent(Box::new(exchange));
 
     // Add oracles
@@ -1013,8 +1090,10 @@ fn run_realtime_with_config(config: SimConfig, tick_ms: u64, api_port: u16, vara
         engine.kernel.add_agent(Box::new(agent));
     }
 
-    // Add HumanAgent (id=100, reserved)
-    let human_address = std::env::var("VARA_HUMAN_ADDRESS").ok();
+    // Add HumanAgent (id=100, reserved). Default to bot_100 address if not provided.
+    let human_address = std::env::var("VARA_HUMAN_ADDRESS")
+        .ok()
+        .or_else(|| address_book.address_for_agent(100));
     engine.kernel.add_agent(Box::new(HumanAgent::new(
         100,
         "HumanTrader".to_string(),
