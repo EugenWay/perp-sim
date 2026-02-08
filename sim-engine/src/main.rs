@@ -35,11 +35,15 @@ struct Args {
     /// HTTP API port for HumanAgent (only in realtime mode)
     #[arg(short, long, default_value = "8080")]
     port: u16,
+
+    /// Skip initial deposits (use when balances already exist on-chain)
+    #[arg(long, default_value = "false")]
+    skip_deposits: bool,
 }
 
 fn main() {
     let args = Args::parse();
-    
+
     println!("=== PerpDEX on Vara Network ===");
     println!("[Main] Scenario: {}", args.scenario);
     if args.realtime {
@@ -63,28 +67,34 @@ fn main() {
             eprintln!("  VARA_WS_ENDPOINT      - WebSocket RPC (default: wss://testnet.vara.network)");
             eprintln!("  VARA_KEYSTORE_PATH    - path to gring keystore (default: keys/Library/...)");
             eprintln!("  VARA_PASSPHRASE_PATH  - path to passphrase file (default: keys/.passphrase)");
+            eprintln!("  VARA_PASSPHRASE_FILE  - legacy name for passphrase path");
             std::process::exit(1);
         }
     };
 
     println!();
-    
+
     if args.realtime {
         scenarios::simple_demo::run_realtime_with_blockchain(
             &args.scenario,
             args.tick_ms,
             args.port,
+            args.skip_deposits,
             vara_client,
         );
     } else {
-        scenarios::simple_demo::run_scenario_with_blockchain(&args.scenario, vara_client);
+        scenarios::simple_demo::run_scenario_with_blockchain(
+            &args.scenario,
+            args.skip_deposits,
+            vara_client,
+        );
     }
 }
 
 /// Initialize VaraClient for blockchain operations
 fn init_vara_client() -> Result<VaraClient, vara::VaraError> {
     let config = VaraConfig::from_env()?;
-    
+
     println!("[Vara] Endpoint: {}", config.ws_endpoint);
     println!("[Vara] Contract: {}", config.contract_address);
     println!("[Vara] Keystore: {}", config.keystore_path);
