@@ -283,7 +283,7 @@ impl GasLimits {
             withdraw: base,            // simple balance update
             add_liquidity: base,       // simple balance update
             submit_order: base,        // moderate: validation + storage
-            execute_order: base * 3 / 2, // heavy: price calc + position update + fees
+            execute_order: base * 5, // heavy: price calc + position update + fees
             cancel_order: base / 2,    // light: just remove from storage
         }
     }
