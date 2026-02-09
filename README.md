@@ -1,298 +1,311 @@
-# PerpDEX Simulator
+# Sim-Engine — Trading Simulation on Vara Network
 
-Event-driven perpetual DEX trading simulator with real-time Pyth Network price feeds and integrated `perp-futures` exchange engine.
+On-chain trading simulation engine for VaraPerps perpetual DEX. Runs bots with various strategies that trade through a real smart contract deployed on Vara Network in real time.
 
-## Features
+## Architecture
 
-- **Real-time price feeds** from Pyth Network
-- **Multiple trading agents**: Cyclic, Hodler, Risky, TrendFollower
-- **Human trading** via HTTP API in realtime mode
-- **Comprehensive logging** to CSV files
-- **Configurable scenarios** via JSON
+```
+┌─────────────────────────────────────────────┐
+│  Sim-Engine (Rust)                          │
+│                                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │ Oracle   │  │ Exchange │  │ Keepers  │  │
+│  │ (Pyth)   │──│ Agent    │──│          │  │
+│  └──────────┘  └────┬─────┘  └──────────┘  │
+│                     │                       │
+│  ┌──────────┐  ┌────┴─────┐  ┌──────────┐  │
+│  │ Market   │  │VaraClient│  │Liquidator│  │
+│  │ Maker    │──│(gclient) │──│          │  │
+│  └──────────┘  └────┬─────┘  └──────────┘  │
+│                     │                       │
+│  ┌──────────────────┴──────────────────┐    │
+│  │ Smart Traders (Arb, Hodler, Fund..) │    │
+│  └─────────────────────────────────────┘    │
+│                                             │
+│  ┌──────────┐  ┌──────────┐                 │
+│  │ HTTP API │  │ WebSocket│  ← Human trader │
+│  │ :8080    │  │ :8081    │                  │
+│  └──────────┘  └──────────┘                 │
+└───────────────┬─────────────────────────────┘
+                │ wss://
+                ▼
+┌───────────────────────────────────────┐
+│  Vara Network (Testnet)               │
+│  VaraPerps Smart Contract             │
+│  Block time: ~3s                      │
+└───────────────────────────────────────┘
+```
 
-## Build
+All orders are sent on-chain. Every transaction goes through the real blockchain: SubmitOrder → ExecuteOrder → confirmation in the next block.
+
+## Requirements
+
+- Rust toolchain (stable)
+- Deployed VaraPerps contract on Vara testnet
+- Keystore with bot keys (gring format)
+- Passphrase file for the keystore
+
+## Setup
+
+### Environment Variables
 
 ```bash
-# Build release version
+# Required
+export VARA_CONTRACT_ADDRESS="0x..."                   # Deployed VaraPerps contract address
+export VARA_KEYSTORE_PATH="/path/to/keystore"          # Path to gring keystore
+export VARA_PASSPHRASE_PATH="/path/to/.passphrase"     # Keystore passphrase file
+
+# Optional
+export VARA_WS_ENDPOINT="wss://testnet.vara.network"   # RPC endpoint (default: testnet)
+export VARA_GAS_LIMIT="200000000000"                   # Base gas limit (default: 100B)
+export VARA_BLOCK_TIME_MS="3000"                       # Block time in ms (default: 3000)
+export VARA_HUMAN_ADDRESS="kG..."                      # SS58 address for HumanAgent
+```
+
+### Gas Limits
+
+Gas automatically scales from `VARA_GAS_LIMIT` (base):
+
+| Operation        | Multiplier | At base=200B |
+| ---------------- | :--------: | :----------: |
+| Deposit/Withdraw |     1x     |     200B     |
+| SubmitOrder      |     1x     |     200B     |
+| **ExecuteOrder** |  **1.5x**  |   **300B**   |
+| CancelOrder      |    0.5x    |     100B     |
+
+### Keystore
+
+Bot keys are generated via `gring`. Each `agent_id` maps to a keypair through the `AddressBook`:
+
+```
+keys/
+├── Library/Application Support/gring/   ← keystore
+├── .passphrase                          ← passphrase
+└── funding_addresses.txt                ← generated automatically
+```
+
+## Running
+
+```bash
+# Build
 cargo build --release
 
-# Binary location
-./target/release/sim-engine
+# Run with test_strategies config
+cargo run --release -- \
+  --scenario test_strategies \
+  --realtime \
+  --skip-deposits \
+  --tick-ms 3000 \
+  --port 8080
 ```
 
-## Usage
+### CLI Arguments
 
-### Fast-forward Mode (default)
+| Argument           | Description                     |   Default    |
+| ------------------ | ------------------------------- | :----------: |
+| `--scenario NAME`  | Config name (without .json)     | `simple_demo`|
+| `--realtime`       | Realtime mode                   |   `false`    |
+| `--tick-ms MS`     | Tick interval (= block time)    |    `3000`    |
+| `--port PORT`      | HTTP API port                   |    `8080`    |
+| `--skip-deposits`  | Skip initial deposits           |   `false`    |
 
-Runs simulation as fast as possible for the configured duration.
+### First Run vs Subsequent Runs
 
 ```bash
-# Run default scenario (simple_demo, 180 seconds)
-./target/release/sim-engine
+# First run — deposits to all accounts
+cargo run --release -- --scenario test_strategies --realtime --tick-ms 3000 --port 8080
 
-# Run specific scenario
-./target/release/sim-engine -s multi_agent
-./target/release/sim-engine --scenario my_scenario
-```
-
-### Realtime Mode
-
-Runs simulation in real-time with HTTP API for manual trading.
-
-```bash
-# Default: 100ms tick, port 8080
-./target/release/sim-engine --realtime
-
-# Custom tick interval (1 second) and port
-./target/release/sim-engine --realtime --tick-ms 1000 --port 9000
-
-# With specific scenario
-./target/release/sim-engine -s simple_demo --realtime -t 1000 -p 8080
-```
-
-### CLI Options
-
-| Option       | Short | Default       | Description                   |
-| ------------ | ----- | ------------- | ----------------------------- |
-| `--scenario` | `-s`  | `simple_demo` | Scenario name (without .json) |
-| `--realtime` | `-r`  | `false`       | Enable realtime mode          |
-| `--tick-ms`  | `-t`  | `100`         | Tick interval in milliseconds |
-| `--port`     | `-p`  | `8080`        | HTTP API port (realtime only) |
-
-## HTTP API (Realtime Mode)
-
-### Open Position
-
-```bash
-curl -X POST http://localhost:8080/order \
-  -H "Content-Type: application/json" \
-  -d '{
-    "action": "open",
-    "symbol": "ETH-USD",
-    "side": "long",
-    "qty": 1,
-    "leverage": 5
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "success": true,
-  "message": "Order: ETH-USD Buy qty=1 lev=5x",
-  "data": { "symbol": "ETH-USD", "side": "Buy", "qty": 1, "leverage": 5 }
-}
-```
-
-### Close Position
-
-```bash
-curl -X POST http://localhost:8080/close \
-  -H "Content-Type: application/json" \
-  -d '{"symbol": "ETH-USD"}'
-```
-
-### Get Status
-
-```bash
-curl http://localhost:8080/status
-```
-
-### Health Check
-
-```bash
-curl http://localhost:8080/health
+# Subsequent runs — balances already exist on-chain
+cargo run --release -- --scenario test_strategies --realtime --skip-deposits --tick-ms 3000 --port 8080
 ```
 
 ## Scenario Configuration
 
-Scenarios are JSON files in `sim-engine/src/scenarios/`.
+Config files are located at `src/scenarios/*.json`.
 
-### Example: `simple_demo.json`
+### Timing and Block Time
+
+Vara block time ≈ 3 seconds. A transaction takes 2 steps (Submit + Execute) = minimum 2 blocks = **6 seconds**.
+
+Rules for `wake_interval_ms`:
+- **Minimum** = `block_time * 2` = 6000ms
+- Sending orders faster than the block time is pointless — they will land in the same or next block anyway
+
+Rules for `start_delay_ms`:
+- **MarketMaker**: 0 (starts first)
+- **Everyone else**: after MM positions are confirmed on-chain (~20s)
+
+### Agent Startup Order
+
+```
+t=0s      Oracle + Exchange + MarketMaker
+          MM sends SEED orders (Long + Short)
+
+t=6-12s   MM positions confirmed on-chain
+          OI sync picks up non-zero positions
+
+t=20-25s  Arbitrageurs + FundingHarvesters + LimitTraders
+          See non-zero OI, start trading
+
+t=30-45s  Hodlers + Institutional
+          Market is already active
+```
+
+### Config Example (Key Fields)
 
 ```json
 {
-  "scenario_name": "simple_demo",
-  "duration_sec": 180,
-  "logs_dir": "logs",
-  "exchange": {
-    "id": 1,
-    "name": "PerpExchange",
-    "markets": [
-      {
-        "id": 0,
-        "symbol": "ETH-USD",
-        "index_token": "ETH",
-        "collateral_token": "USDT",
-        "initial_liquidity": {
-          "collateral_amount": 10000000000000,
-          "index_amount": 5000000000000,
-          "liquidity_usd": 20000000000000
-        }
-      }
-    ]
+  "oracles": [{
+    "cache_duration_ms": 3000,
+    "wake_interval_ms": 3000
+  }],
+  "market_maker": {
+    "wake_interval_ms": 6000,
+    "order_size_tokens": 2.7,
+    "leverage": 2
   },
-  "oracles": [
-    {
-      "id": 2,
-      "name": "PythOracle",
-      "symbols": ["ETH-USD"],
-      "provider": "Pyth",
-      "cache_duration_ms": 5000,
-      "wake_interval_ms": 5000
-    }
-  ],
-  "traders": [
-    {
-      "id": 10,
-      "name": "CyclicTrader",
-      "symbol": "ETH-USD",
-      "wake_interval_ms": 10000
-    }
+  "keepers": [
+    { "wake_interval_ms": 3000 }
   ],
   "smart_traders": [
     {
-      "id": 20,
-      "name": "HodlerLong",
-      "symbol": "ETH-USD",
+      "strategy": "arbitrageur",
+      "wake_interval_ms": 6000,
+      "start_delay_ms": 20000
+    },
+    {
       "strategy": "hodler",
-      "side": "long",
-      "leverage": 5,
-      "qty": 1,
-      "hold_duration_sec": 120
+      "wake_interval_ms": 9000,
+      "start_delay_ms": 30000
     }
   ]
 }
 ```
 
-## Units of Measurement
+## Bot Strategies
 
-### External (API, Logs, Frontend)
+### MarketMaker
+Provides liquidity. Monitors OI balance between Long/Short, places SEED orders on the weaker side.
 
-| Value               | Unit        | Scale    | Example                  |
-| ------------------- | ----------- | -------- | ------------------------ |
-| **Prices**          | micro-USD   | 1e-6 USD | `2939000000` = $2,939.00 |
-| **Size/Collateral** | micro-USD   | 1e-6 USD | `585000000` = $585.00    |
-| **Order qty**       | tokens      | f64      | `0.5` = 0.5 ETH          |
-| **Liquidity**       | micro-USD   | 1e-6 USD | `20000000000000` = $20M  |
-| **Timestamps**      | nanoseconds | 1e-9 sec | Unix epoch in ns         |
-| **Leverage**        | integer     | 1x       | `5` = 5x leverage        |
+### Arbitrageur
+Catches divergence between the on-chain price and oracle (Pyth). Opens a position when deviation > threshold, closes when the price reverts.
 
-**Note:** Order `qty` field is **number of tokens** as float. E.g., `qty: 0.5` at ETH price $3000 with leverage 5x opens a $1500 position ($300 collateral).
+### FundingHarvester
+Trades the funding rate. Opens a position on the side with positive funding, holds until exit deviation.
 
-### Internal (perp-futures engine)
+### Hodler
+Directional bet (Long/Short) with a fixed hold duration. TP/SL based on percentage thresholds.
 
-| Value               | Unit            | Scale      | Example                          |
-| ------------------- | --------------- | ---------- | -------------------------------- |
-| **Prices**          | USD per atom    | 1e30       | ETH: `3000 * 10^12` per wei      |
-| **Size/OI**         | USD             | 1e30       | `585 * 10^30` = $585             |
-| **Collateral**      | atoms           | 10^decimals| USDC: `585000000` (6 decimals)   |
-| **Liquidity**       | USD             | 1e30       | `20_000_000 * 10^30` = $20M      |
+### Institutional
+Large positions with long hold times and moderate leverage.
 
-### Price Normalization
+### Limit Traders
+- **MeanReversion** — limit orders at current price ± offset
+- **Breakout** — limit orders to catch level breakouts
+- **Grid** — grid of orders around the current price
+- **Smart** — technical analysis (SMA crossover + RSI + ATR)
 
-Conversion between external micro-USD and internal USD(1e30) per atom:
+### Keepers
+Execute pending limit/stop/TP orders when the price reaches the trigger level.
 
-```rust
-// External → Internal (at SimOracle boundary)
-price_per_atom = price_micro_usd * 10^(24 - token_decimals)
+### LiquidationAgent
+Scans positions for liquidation, sends liquidation orders.
 
-// Examples:
-// ETH ($3000, 18 decimals):  3_000_000_000 * 10^6  = 3000 * 10^12 per wei
-// BTC ($100k, 8 decimals):   100_000_000_000 * 10^16 = 100000 * 10^22 per satoshi
-// USDC ($1, 6 decimals):     1_000_000 * 10^18 = 10^24 per atom
+## API
 
-// Internal → External (for display)
-price_micro_usd = price_per_atom / 10^(24 - token_decimals)
+### HTTP API (`:8080`)
+
+```bash
+# Open a position
+curl -X POST http://localhost:8080/order -d '{
+  "action": "open",
+  "symbol": "ETH-USD",
+  "side": "long",
+  "qty": 1.0,
+  "leverage": 5
+}'
+
+# Close a position
+curl -X POST http://localhost:8080/order -d '{
+  "action": "close",
+  "symbol": "ETH-USD",
+  "side": "long"
+}'
 ```
 
-### Converting Values
+### WebSocket API (`:8081`)
 
-```python
-# External: micro-USD to USD
-usd = micro_usd / 1_000_000
+```javascript
+const ws = new WebSocket('ws://localhost:8081');
 
-# Example: 2939000000 -> $2,939.00
-price = 2939000000 / 1_000_000  # = 2939.0
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    action: 'open',
+    symbol: 'ETH-USD',
+    side: 'long',
+    qty: 5,
+    leverage: 10
+  }));
+};
 
-# Internal: USD(1e30) to USD
-usd = usd_1e30 / 1e30
-
-# Example: 585 * 10^30 -> $585.00
-size = (585 * 10**30) / 10**30  # = 585.0
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  // data.type: 'Event' | 'Response' | 'Error'
+  // Event types: OracleTick, OrderExecuted, PositionLiquidated, PositionSnapshot
+};
 ```
 
-## Output Logs
+## Logs
 
-All logs are saved to `logs/` directory:
+CSV logs are written to `logs/`:
 
-| File             | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `oracle.csv`     | Price updates (timestamp, symbol, min, max, mid) |
-| `orders.csv`     | Order submissions (before execution)             |
-| `executions.csv` | Executed orders with prices                      |
-| `positions.csv`  | Position snapshots with PnL                      |
-| `markets.csv`    | Market state (OI, liquidity)                     |
+| File               | Contents                          |
+| ------------------ | --------------------------------- |
+| `orders.csv`       | All submitted orders              |
+| `executions.csv`   | Confirmed executions              |
+| `oracle.csv`       | Price ticks                       |
+| `positions.csv`    | Position snapshots                |
+| `markets.csv`      | OI and liquidity                  |
 
-### Example: `positions.csv`
+On-chain transaction results are also logged to `vara_transactions.csv`.
 
-```csv
-ts,account,symbol,side,size_usd,size_tokens,collateral,entry_price,current_price,pnl,liquidation_price,leverage,is_liquidatable,opened_at
-1766918964297046000,10,ETH-USD,Buy,2925820000,1,585164000,2925820000,2939000000,13180000,2340656000,5,false,1766918964
-```
-
-## Trading Agents
-
-### Built-in Strategies
-
-| Agent             | Strategy      | Description                         |
-| ----------------- | ------------- | ----------------------------------- |
-| **CyclicTrader**  | Alternating   | Opens long/short alternately        |
-| **Hodler**        | Hold          | Opens position, holds for N seconds |
-| **Risky**         | High leverage | Random side, high leverage (10-20x) |
-| **TrendFollower** | Momentum      | Follows price trend with lookback   |
-| **HumanAgent**    | Manual        | Controlled via HTTP API             |
-
-## Supported Symbols
-
-- ETH-USD
-- BTC-USD
-- SOL-USD
-- AVAX-USD
-- MATIC-USD
-
-## Architecture
+## Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Kernel                              │
-│  (Event loop, message queue, virtual time)              │
-└─────────────────────────────────────────────────────────┘
-         │              │              │
-         ▼              ▼              ▼
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│ OracleAgent │ │ExchangeAgent│ │ TraderAgent │
-│ (Pyth API)  │ │(perp-futures│ │  (Bots)     │
-└─────────────┘ │  Executor)  │ └─────────────┘
-                └─────────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-              │   CSV Loggers   │
-              └─────────────────┘
+src/
+├── main.rs                 # CLI + VaraClient init
+├── kernel.rs               # Event loop + message queue
+├── sim_engine.rs           # SimEngine wrapper
+├── agents/
+│   ├── exchange_agent.rs   # Bridge: sim ↔ on-chain contract
+│   ├── market_maker_agent.rs
+│   ├── smart_trader_agent.rs
+│   ├── limit_trader_agent.rs
+│   ├── keeper_agent.rs
+│   ├── liquidation_agent.rs
+│   ├── human_agent.rs      # HTTP/WS → sim messages
+│   └── oracle_agent.rs     # Pyth price feed
+├── vara/
+│   ├── client.rs           # VaraClient (gclient + sails)
+│   ├── keystore.rs         # Keypair management
+│   ├── types.rs            # Generated types re-export
+│   └── vara_perps.idl      # Contract IDL
+├── scenarios/
+│   ├── simple_demo.rs      # Scenario loader + runner
+│   ├── test_strategies.json
+│   └── *.json              # Other configs
+├── api/
+│   ├── server.rs           # HTTP API
+│   ├── ws.rs               # WebSocket API
+│   ├── pyth.rs             # Pyth price provider
+│   └── cache.rs            # Price cache
+├── messages.rs             # Message types + SimulatorApi
+├── events.rs               # EventBus + CSV logging
+├── logging.rs              # CSV loggers
+├── latency.rs              # Network latency model
+├── pending_orders.rs       # Pending order tracking
+└── trigger_checker.rs      # Limit/Stop trigger logic
 ```
-
-## Engine Integration
-
-The simulator uses `perp-futures` engine API for:
-
-- ✅ **Liquidation checks**: `executor.is_liquidatable_by_margin()`
-- ✅ **Liquidation price**: `executor.calculate_liquidation_price()`
-- ✅ **Order execution**: All orders executed through `executor.execute_order()`
-- ✅ **PnL calculation**: Engine handles PnL with fees, funding, borrowing, price impact
-
-See `PERP_FUTURES_ISSUES.md` for known engine limitations.
 
 ## License
 
